@@ -346,6 +346,17 @@ class AsyncTelemetrySanitizerTest(unittest.TestCase):
                     "client_observation_upload_ms": 31.0,
                     "client_result_download_ms": 32.0,
                     "client_network_transport_total_ms": 63.0,
+                    "wire_round_trip_ms": 220.0,
+                    "request_bytes": 120000,
+                    "response_bytes": 2000,
+                    "request_pack_ms": 0.4,
+                    "response_unpack_ms": 0.1,
+                    "image_encode_ms": 2.0,
+                    "server_image_decode_ms": 1.5,
+                    "image_raw_bytes": 589824,
+                    "image_encoded_bytes": 100000,
+                    "image_compression_ratio": 5.89824,
+                    "image_transport": "jpeg",
                     "generation": 17,
                 },
             },
@@ -357,6 +368,11 @@ class AsyncTelemetrySanitizerTest(unittest.TestCase):
         self.assertEqual(telemetry["client_result_download_ms"], 32.0)
         self.assertEqual(telemetry["client_network_transport_total_ms"], 63.0)
         self.assertEqual(telemetry["client_timing_generation"], 17)
+        self.assertEqual(telemetry["client_image_transport"], "jpeg")
+        self.assertEqual(telemetry["client_request_bytes"], 120000)
+        self.assertEqual(telemetry["client_image_encoded_bytes"], 100000)
+        self.assertEqual(telemetry["client_wire_round_trip_ms"], 220.0)
+        self.assertEqual(telemetry["server_image_decode_ms"], 1.5)
 
     def test_clock_sync_metadata_is_preserved_and_non_boolean_values_fail_closed(self):
         telemetry = HELPER.sanitize_async_client_telemetry(
@@ -571,6 +587,60 @@ class AsyncTelemetrySanitizerTest(unittest.TestCase):
         self.assertIn('"recommended_inference_launch_hz": DEFAULT_ASYNC_INFERENCE_LAUNCH_HZ', source)
         self.assertIn('"action_time_step_s": (1.0 / contract.action_hz)', source)
         self.assertIn('"action_start_offset_steps": contract.model_action_start_offset', source)
+
+
+class PolicyTransportTelemetryTest(unittest.TestCase):
+    def test_image_decode_timing_is_published_without_reaching_model(self):
+        class FakeTelemetry:
+            def __init__(self):
+                self.published = None
+
+            def inference_started(self):
+                pass
+
+            def inference_finished(self):
+                pass
+
+            def execution_control(self):
+                return {}
+
+            def publish(self, observation, result, elapsed):
+                self.published = (observation, result, elapsed)
+                return 1
+
+            def mark_response_ready(self, sequence, response_ready_at):
+                pass
+
+        class FakeModel:
+            def __init__(self):
+                self.observation = None
+
+            def infer(self, observation):
+                self.observation = observation
+                return {"actions": np.zeros((16, 7), dtype=np.float32)}
+
+        telemetry = FakeTelemetry()
+        model = FakeModel()
+        wrapper = HELPER.TelemetryPolicy(model, telemetry)
+        observation = {
+            "client_metadata": {
+                "server_transport_received_at": 100.0,
+                "request_sent_at": 99.9,
+                "_server_image_transport_timing": {
+                    "image_transport": "jpeg",
+                    "image_decode_ms": 2.0,
+                },
+            }
+        }
+
+        result = wrapper.infer(observation)
+
+        self.assertNotIn("_server_image_transport_timing", model.observation["client_metadata"])
+        self.assertEqual(result["transport_timing"]["image_transport"], "jpeg")
+        self.assertEqual(result["transport_timing"]["image_decode_ms"], 2.0)
+        self.assertEqual(
+            telemetry.published[1]["transport_timing"]["image_decode_ms"], 2.0
+        )
 
 
 class OpenPiActionTimingContractTest(unittest.TestCase):

@@ -87,6 +87,34 @@ telemetry 断开或任一逐周期安全检查失败时，客户端只会保持�
 - 推理失败、generation 不匹配、连接断开或队列耗尽时 fail closed 并保持最后安全目标；
 - `monitoring_data/<session>/events.jsonl` 和模型结果记录中包含 RTC telemetry。
 
+### 图像传输与慢链路处理
+
+客户端和 4090 Policy 在握手 metadata 中协商观测图像编码：当前服务端默认
+优先 `jpeg`（质量 90），同时继续接受 `raw`。客户端默认
+`--image-transport auto`，会跟随服务端 preference；没有该 metadata 的旧服务端
+自动回退到原始 ndarray。需要强制选择时使用：
+
+```bash
+bin/bimanual-vla rtc-client ... --image-transport jpeg --jpeg-quality 85
+bin/bimanual-vla rtc-client ... --image-transport raw
+```
+
+显式请求服务端不支持的编码会在握手阶段失败，不会发送机器人指令。JPEG 只压缩
+`images` 字段，state、prompt、RTC metadata 和 action chunk 仍使用官方
+MessagePack 协议；服务端解码后再进入 OpenPI/RTC，因此模型输入合同不变。
+
+每次结果的 `client_transport_timing` / `transport_timing` 会记录实际 wire 数据，
+包括 `request_bytes`、`response_bytes`、`request_pack_ms`、`response_unpack_ms`、
+`wire_round_trip_ms`、`image_raw_bytes`、`image_encoded_bytes`、
+`image_compression_ratio`、`image_encode_ms` 和 `server_image_decode_ms`，并标记
+`image_transport`。`wire_send_started_at` 用于把 WebSocket 发送边界与服务端接收
+时间对齐；跨机器的单向 upload/download 仍依赖同步的 wall clock，RTT 使用客户端
+monotonic clock。
+
+推理调度仍以 `--hz 4` 为目标，单次只允许一个在途请求。若 250 ms 槽位因上一轮
+请求未完成而被跳过，客户端会在该响应到达的控制周期把下一槽位立即设为 due，
+不会再额外等待一个完整的 250 ms 周期；实际 launch/result 频率仍受端到端延迟限制。
+
 ### 重要约束
 
 RTC 必须在模型 denoising 阶段运行；只在客户端做 action 插值不等价于 RTC。

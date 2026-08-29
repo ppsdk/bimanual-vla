@@ -49,6 +49,10 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 from bimanual_vla.collection.camera import CameraCapture, CameraFrameSet, CameraPreview
+from bimanual_vla.deployment.image_transport import (
+    OptimizedPolicyClient,
+    negotiate_image_transport,
+)
 from bimanual_vla.deployment.recording import DeploymentRunRecorder
 from bimanual_vla.collection.output import require_can_interface_up
 from bimanual_vla.data.action_conventions import (
@@ -1273,21 +1277,35 @@ def connect_policy(
     arm_side: str,
     arm_mode: str = "single",
     output_mode: str = "auto",
+    image_transport: str = "auto",
+    jpeg_quality: int | None = None,
 ) -> tuple[Any, PolicyProtocol]:
-    """Create the official OpenPI client and validate the server handshake."""
+    """Create the OpenPI client and validate the action/image handshake."""
     from openpi_client.websocket_client_policy import WebsocketClientPolicy
 
     logging.info("Connecting to official OpenPI policy at ws://%s:%d ...", host, port)
-    policy = WebsocketClientPolicy(host=host, port=port)
+    base_policy = WebsocketClientPolicy(host=host, port=port)
+    policy: Any = base_policy
     try:
-        metadata = policy.get_server_metadata()
+        metadata = base_policy.get_server_metadata()
         if not isinstance(metadata, dict):
             raise RuntimeError(f"invalid policy metadata: {type(metadata).__name__}")
         protocol = validate_policy_metadata(metadata, arm_side, arm_mode, output_mode)
+        transport_config = negotiate_image_transport(
+            metadata,
+            requested=image_transport,
+            jpeg_quality=jpeg_quality,
+        )
+        policy = OptimizedPolicyClient(base_policy, transport_config)
     except Exception:
         close_policy(policy)
         raise
-    logging.info("Policy connected: %s", metadata)
+    logging.info(
+        "Policy connected: image_transport=%s jpeg_quality=%d metadata=%s",
+        transport_config.encoding,
+        transport_config.jpeg_quality,
+        metadata,
+    )
     return policy, protocol
 
 
@@ -1700,6 +1718,10 @@ class PeriodicSchedule:
         periods = int(math.floor(elapsed / self.period_s)) + 1
         self.next_at += periods * self.period_s
         return True
+
+    def retry_now(self, now: float) -> None:
+        """Make a slot missed by a single in-flight request immediately due."""
+        self.next_at = min(self.next_at, float(now))
 
 
 def estimate_event_rate_hz(timestamps: Any) -> float | None:
@@ -2340,6 +2362,17 @@ class ExecutionController:
             "client_result_download_ms",
             "client_network_transport_total_ms",
             "non_model_rtt_ms",
+            "wire_round_trip_ms",
+            "request_bytes",
+            "response_bytes",
+            "request_pack_ms",
+            "response_unpack_ms",
+            "image_encode_ms",
+            "image_raw_bytes",
+            "image_encoded_bytes",
+            "image_compression_ratio",
+            "server_image_decode_ms",
+            "wire_send_started_at",
         }
         cleaned = {
             key: value
@@ -2356,6 +2389,9 @@ class ExecutionController:
             return
         cleaned["generation"] = int(generation)
         cleaned["timing_valid"] = True
+        image_transport = str(raw.get("image_transport") or "").strip().lower()
+        if image_transport in {"raw", "jpeg"}:
+            cleaned["image_transport"] = image_transport
         self.last_client_timing_source = str(raw.get("timing_source") or "") or None
         self.last_client_one_way_clock = str(raw.get("one_way_timing_clock") or "") or None
         sync_required = raw.get("one_way_timing_requires_clock_sync")
@@ -2523,6 +2559,18 @@ class ExecutionController:
             "client_network_transport_total_ms": self.last_client_transport_timing.get("client_network_transport_total_ms"),
             "non_model_rtt_ms": self.last_client_transport_timing.get("non_model_rtt_ms"),
             "round_trip_ms": self.last_client_transport_timing.get("round_trip_ms"),
+            "wire_round_trip_ms": self.last_client_transport_timing.get("wire_round_trip_ms"),
+            "request_bytes": self.last_client_transport_timing.get("request_bytes"),
+            "response_bytes": self.last_client_transport_timing.get("response_bytes"),
+            "request_pack_ms": self.last_client_transport_timing.get("request_pack_ms"),
+            "response_unpack_ms": self.last_client_transport_timing.get("response_unpack_ms"),
+            "image_transport": self.last_client_transport_timing.get("image_transport"),
+            "image_encode_ms": self.last_client_transport_timing.get("image_encode_ms"),
+            "image_raw_bytes": self.last_client_transport_timing.get("image_raw_bytes"),
+            "image_encoded_bytes": self.last_client_transport_timing.get("image_encoded_bytes"),
+            "image_compression_ratio": self.last_client_transport_timing.get("image_compression_ratio"),
+            "server_image_decode_ms": self.last_client_transport_timing.get("server_image_decode_ms"),
+            "wire_send_started_at": self.last_client_transport_timing.get("wire_send_started_at"),
             "request_sent_at": self.last_client_transport_timing.get("request_sent_at"),
             "server_request_received_at": self.last_client_transport_timing.get("server_request_received_at"),
             "server_model_completed_at": self.last_client_transport_timing.get("server_model_completed_at"),
@@ -4603,6 +4651,7 @@ def build_client_transport_timing(
     server_timing: dict[str, Any] | None,
     camera_capture_ms: float | None,
     inference_generation: int,
+    wire_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Measure and report transport timing from the client side.
 
@@ -4613,6 +4662,7 @@ def build_client_transport_timing(
     local intervals use monotonic clocks.
     """
     server_timing = server_timing if isinstance(server_timing, dict) else {}
+    wire_metrics = wire_metrics if isinstance(wire_metrics, dict) else {}
 
     def finite(value: Any) -> float | None:
         try:
@@ -4628,10 +4678,25 @@ def build_client_transport_timing(
             return None
         return (end_value - start_value) * 1000.0
 
+    request_sent_at = finite(wire_metrics.get("request_sent_at")) or float(request_sent_at)
+    request_sent_monotonic = (
+        finite(wire_metrics.get("request_sent_monotonic")) or float(request_sent_monotonic)
+    )
+    response_received_at = (
+        finite(wire_metrics.get("response_received_at")) or float(response_received_at)
+    )
+    response_received_monotonic = (
+        finite(wire_metrics.get("response_received_monotonic"))
+        or float(response_received_monotonic)
+    )
+    wire_send_started_at = finite(wire_metrics.get("wire_send_started_at"))
     server_request_received_at = finite(server_timing.get("server_request_received_at"))
     server_response_ready_at = finite(server_timing.get("server_response_ready_at"))
     model_inference_ms = finite(server_timing.get("model_inference_ms"))
-    upload_ms = interval(server_request_received_at, request_sent_at)
+    upload_ms = interval(
+        server_request_received_at,
+        wire_send_started_at if wire_send_started_at is not None else request_sent_at,
+    )
     download_ms = interval(response_received_at, server_response_ready_at)
     round_trip_ms = max(
         0.0, (float(response_received_monotonic) - float(request_sent_monotonic)) * 1000.0
@@ -4646,7 +4711,7 @@ def build_client_transport_timing(
         if model_inference_ms is not None
         else None
     )
-    return {
+    result = {
         "camera_capture_ms": finite(camera_capture_ms),
         "observation_upload_ms": upload_ms,
         "client_observation_upload_ms": upload_ms,
@@ -4658,16 +4723,35 @@ def build_client_transport_timing(
         "non_model_rtt_ms": non_model_rtt_ms,
         "round_trip_ms": round_trip_ms,
         "request_sent_at": finite(request_sent_at),
+        "wire_send_started_at": wire_send_started_at,
         "server_request_received_at": server_request_received_at,
         "server_model_completed_at": finite(server_timing.get("server_model_completed_at")),
         "server_response_ready_at": server_response_ready_at,
         "response_received_at": finite(response_received_at),
         "response_received_monotonic": finite(response_received_monotonic),
         "inference_generation": int(inference_generation),
-        "timing_source": "client_wall_clock_echo",
+        "timing_source": (
+            "client_wire_instrumentation" if wire_metrics else "client_wall_clock_echo"
+        ),
         "one_way_timing_clock": "wall_clock",
         "one_way_timing_requires_clock_sync": True,
     }
+    for key in (
+        "wire_round_trip_ms",
+        "request_bytes",
+        "response_bytes",
+        "request_pack_ms",
+        "response_unpack_ms",
+        "image_encode_ms",
+        "image_raw_bytes",
+        "image_encoded_bytes",
+        "image_compression_ratio",
+    ):
+        result[key] = finite(wire_metrics.get(key))
+    result["server_image_decode_ms"] = finite(server_timing.get("server_image_decode_ms"))
+    image_transport = str(wire_metrics.get("image_transport") or "").strip().lower()
+    result["image_transport"] = image_transport if image_transport in {"raw", "jpeg"} else None
+    return result
 
 
 def run_rtc_client(args: argparse.Namespace) -> None:
@@ -4829,6 +4913,7 @@ def run_rtc_client(args: argparse.Namespace) -> None:
 
         next_control_at = time.monotonic()
         launch_schedule = PeriodicSchedule(args.hz, next_at=next_control_at)
+        launch_deferred_while_in_flight = False
         while True:
             tick_started = time.monotonic()
             execution.record_control_tick(overrun=tick_started > next_control_at + control_period)
@@ -4851,6 +4936,8 @@ def run_rtc_client(args: argparse.Namespace) -> None:
                                 args.arm_side,
                                 args.arm_mode,
                                 output_mode,
+                                getattr(args, "image_transport", "auto"),
+                                getattr(args, "jpeg_quality", None),
                             )
                             execution.configure_protocol(protocol)
                             recorder.update_metadata({
@@ -4926,6 +5013,9 @@ def run_rtc_client(args: argparse.Namespace) -> None:
 
                     completion = worker.poll()
                     if completion is not None:
+                        if launch_deferred_while_in_flight:
+                            launch_schedule.retry_now(tick_started)
+                            launch_deferred_while_in_flight = False
                         if completion.error is not None:
                             execution.reject_inference_completion(completion)
                             try:
@@ -5019,6 +5109,7 @@ def run_rtc_client(args: argparse.Namespace) -> None:
                     if launch_schedule.due(tick_started):
                         if worker.in_flight:
                             execution.record_launch_deferred()
+                            launch_deferred_while_in_flight = True
                         elif policy is not None:
                             camera_selection_started_at = time.time()
                             camera_selection_started_monotonic = time.monotonic()
@@ -5113,6 +5204,7 @@ def run_rtc_client(args: argparse.Namespace) -> None:
                                         }
                                     )
                                     result = dict(policy_ref.infer(observation))
+                                    wire_metrics = result.pop("_client_wire_metrics", None)
                                     response_received_at = time.time()
                                     response_received_monotonic = time.monotonic()
                                     server_timing = result.get("transport_timing")
@@ -5135,6 +5227,7 @@ def run_rtc_client(args: argparse.Namespace) -> None:
                                         )
                                         * 1000.0,
                                         inference_generation=launch_ref.generation,
+                                        wire_metrics=wire_metrics,
                                     )
                                     return InferenceWorkerResult(
                                         result=result,
@@ -5311,6 +5404,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default=os.environ.get("BIMANUAL_VLA_POLICY_HOST", DEFAULT_POLICY_HOST))
     parser.add_argument("--port", type=int, default=int(os.environ.get("BIMANUAL_VLA_POLICY_PORT", DEFAULT_POLICY_PORT)))
+    parser.add_argument(
+        "--image-transport",
+        choices=("auto", "raw", "jpeg"),
+        default="auto",
+        help="observation image transport; auto follows Policy metadata",
+    )
+    parser.add_argument(
+        "--jpeg-quality",
+        type=int,
+        default=None,
+        help="override the Policy-advertised JPEG quality (1-100)",
+    )
     parser.add_argument("--arm-mode", choices=("single", "bimanual"), default="single")
     parser.add_argument(
         "--output-mode",
@@ -5625,6 +5730,8 @@ def main() -> None:
     args.max_image_state_skew_s = args.max_image_state_skew_ms / 1000.0
     if not 1 <= args.port <= 65535:
         parser.error("port must be in [1, 65535]")
+    if args.jpeg_quality is not None and not 1 <= args.jpeg_quality <= 100:
+        parser.error("jpeg-quality must be in [1, 100]")
     if args.action_chunk_steps is not None:
         args.min_action_chunk_steps = args.action_chunk_steps
     positive = (

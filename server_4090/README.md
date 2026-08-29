@@ -346,6 +346,35 @@ bin/bimanual-vla rtc-client \
 6. 根据 metadata 自动发送匹配的 state 和相机字段，并只接受 `model_action_dim` 指定的 7D/14D wire action；legacy joint checkpoint 继续使用 metres，新 checkpoint 使用 opening fraction。
 7. 每次推理把当前观测保存为唯一 anchor；Dashboard telemetry 同时显示 raw/model/wire 合同、chunk 生命周期和最后 wire/decoded target。切换模型造成断线时自动重连并重新协商合同。
 
+### 图像传输优化
+
+4090 Policy metadata 会额外发布 `image_transport`：支持 `raw` 和 `jpeg`，默认
+preference 为 JPEG quality 90。RTC 客户端的 `--image-transport auto` 会自动采用
+该 preference；连接不带此扩展 metadata 的旧 Policy 时自动使用 raw ndarray，保证
+兼容已有客户端和服务端。也可以显式指定：
+
+```bash
+bin/bimanual-vla rtc-client ... --image-transport jpeg --jpeg-quality 85
+bin/bimanual-vla rtc-client ... --image-transport raw
+```
+
+显式编码不在服务端 supported 列表时，客户端会在握手阶段 fail closed。JPEG 仅
+改变 WebSocket 中 `images` 的 payload，服务端在调用 OpenPI policy 前恢复为
+`uint8` RGB `256 x 256` 数组；state、prompt、RTC metadata 和 action chunk 合同
+保持不变。服务端仍接受旧的原始 ndarray 请求。
+
+Dashboard 的每条 Policy telemetry 会保留客户端实际 MessagePack/wire 指标：
+`client_image_transport`、`client_request_bytes`、`client_response_bytes`、
+`client_image_raw_bytes`、`client_image_encoded_bytes`、`client_image_encode_ms`、
+`client_image_compression_ratio`、`client_request_pack_ms`、
+`client_response_unpack_ms`、`client_wire_round_trip_ms` 和
+`server_image_decode_ms`。这些字段来自实际 pack/send/recv 边界，不是按图像尺寸
+估算；单向 upload/download 仍注明需要 wall-clock 同步。
+
+客户端保持单在途请求。若 4 Hz 的 250 ms launch slot 被在途请求占用，响应返回
+后会立即补发该 missed slot；因此不会因为一次慢请求再人为增加 250 ms 调度等待，
+但吞吐上限仍约为 `1 / capture_to_result_latency`。
+
 Policy metadata 会继续发布：`action_hz` 等于数据集 `meta/info.json` 的 `fps`（实测通常为
 20 Hz），`action_horizon` 等于模型输出 horizon（通常为 50），`action_time_step_s=1/fps`，
 `action_start_offset_steps=1`。执行客户端和 Dashboard 都要求 `action_horizon >= 16`，

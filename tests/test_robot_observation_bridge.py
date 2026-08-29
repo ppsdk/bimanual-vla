@@ -1151,6 +1151,45 @@ class ClientTransportTimingTest(unittest.TestCase):
         self.assertIsNone(timing["network_transport_total_ms"])
         self.assertEqual(timing["inference_generation"], 8)
 
+    def test_build_client_transport_timing_includes_wire_and_image_metrics(self):
+        timing = build_client_transport_timing(
+            request_sent_at=100.0,
+            request_sent_monotonic=10.0,
+            response_received_at=100.3,
+            response_received_monotonic=10.3,
+            server_timing={
+                "server_request_received_at": 100.03,
+                "server_response_ready_at": 100.28,
+                "model_inference_ms": 200.0,
+                "server_image_decode_ms": 2.5,
+            },
+            camera_capture_ms=1.0,
+            inference_generation=9,
+            wire_metrics={
+                "request_sent_at": 100.01,
+                "request_sent_monotonic": 10.01,
+                "response_received_at": 100.29,
+                "response_received_monotonic": 10.29,
+                "wire_round_trip_ms": 280.0,
+                "request_bytes": 120_000,
+                "response_bytes": 2_000,
+                "request_pack_ms": 0.4,
+                "response_unpack_ms": 0.1,
+                "image_encode_ms": 2.0,
+                "image_raw_bytes": 589_824,
+                "image_encoded_bytes": 100_000,
+                "image_compression_ratio": 5.89824,
+                "image_transport": "jpeg",
+            },
+        )
+
+        self.assertEqual(timing["timing_source"], "client_wire_instrumentation")
+        self.assertEqual(timing["image_transport"], "jpeg")
+        self.assertEqual(timing["request_bytes"], 120_000)
+        self.assertEqual(timing["image_encoded_bytes"], 100_000)
+        self.assertAlmostEqual(timing["server_image_decode_ms"], 2.5)
+        self.assertAlmostEqual(timing["round_trip_ms"], 280.0)
+
 
 class AsyncInferencePipelineTest(unittest.TestCase):
     def setUp(self):
@@ -2187,6 +2226,17 @@ class AsyncInferencePipelineTest(unittest.TestCase):
         due_at = [tick * 0.05 for tick in range(20) if schedule.due(tick * 0.05)]
         np.testing.assert_allclose(due_at, [0.0, 0.25, 0.50, 0.75], atol=1e-12)
         self.assertAlmostEqual(schedule.period_s, 0.25)
+
+    def test_missed_single_inflight_slot_retries_when_response_arrives(self):
+        schedule = PeriodicSchedule(DEFAULT_INFERENCE_HZ, next_at=0.0)
+        self.assertTrue(schedule.due(0.0))
+        # The 250 ms slot is consumed while the previous request is still in flight.
+        self.assertTrue(schedule.due(0.25))
+        self.assertAlmostEqual(schedule.next_at, 0.5)
+
+        schedule.retry_now(0.303)
+        self.assertTrue(schedule.due(0.303))
+        self.assertAlmostEqual(schedule.next_at, 0.553)
 
     def test_control_rate_must_match_policy_action_rate(self):
         execution = ExecutionController(

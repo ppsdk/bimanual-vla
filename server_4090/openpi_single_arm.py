@@ -200,6 +200,12 @@ try:
 except ImportError:  # Keep the OpenPI helper usable while collection code is staged separately.
     _piper_action_conventions = None
 
+from bimanual_vla.data.contract import IMAGE_HW
+from bimanual_vla.deployment.image_transport import (
+    DEFAULT_JPEG_QUALITY,
+    ImageTransportPolicy,
+    server_image_transport_metadata,
+)
 from bimanual_vla.deployment.rtc_policy import RTCConfig, build_rtc_policy
 
 
@@ -2422,9 +2428,26 @@ def sanitize_async_client_telemetry(
             "client_observation_upload_ms": "client_observation_upload_ms",
             "client_result_download_ms": "client_result_download_ms",
             "client_network_transport_total_ms": "client_network_transport_total_ms",
+            "client_wire_round_trip_ms": "wire_round_trip_ms",
+            "client_request_pack_ms": "request_pack_ms",
+            "client_response_unpack_ms": "response_unpack_ms",
+            "client_image_encode_ms": "image_encode_ms",
+            "client_image_compression_ratio": "image_compression_ratio",
+            "server_image_decode_ms": "server_image_decode_ms",
         }.items():
             if result.get(output) is None:
                 result[output] = _telemetry_nonnegative_float(timing_payload.get(key))
+        for output, key in {
+            "client_request_bytes": "request_bytes",
+            "client_response_bytes": "response_bytes",
+            "client_image_raw_bytes": "image_raw_bytes",
+            "client_image_encoded_bytes": "image_encoded_bytes",
+        }.items():
+            result[output] = _telemetry_nonnegative_int(timing_payload.get(key))
+        image_transport = str(timing_payload.get("image_transport") or "").lower()
+        result["client_image_transport"] = (
+            image_transport if image_transport in {"raw", "jpeg"} else None
+        )
 
     result["client_timing_source"] = str(
         _first_client_value(client, "client_timing_source", "timing_source") or ""
@@ -3033,15 +3056,18 @@ class TelemetryPolicy:
         self.telemetry = telemetry
 
     def infer(self, observation: dict) -> dict:
-        server_request_received_at = time.time()
+        client = observation.get("client_metadata")
+        client = client if isinstance(client, dict) else {}
+        image_timing = client.pop("_server_image_transport_timing", None)
+        server_request_received_at = _telemetry_nonnegative_float(
+            client.get("server_transport_received_at")
+        ) or time.time()
         started = time.monotonic()
         self.telemetry.inference_started()
         try:
             result = dict(self.policy.infer(observation))
             model_inference_s = time.monotonic() - started
             server_model_completed_at = time.time()
-            client = observation.get("client_metadata")
-            client = client if isinstance(client, dict) else {}
             request_sent_at = _telemetry_nonnegative_float(client.get("request_sent_at"))
             request_generation = _telemetry_nonnegative_int(client.get("inference_generation"))
             observation_upload_ms = (
@@ -3050,7 +3076,13 @@ class TelemetryPolicy:
                 and server_request_received_at >= request_sent_at
                 else None
             )
-            transport_timing = {
+            existing_timing = result.get("transport_timing")
+            transport_timing = (
+                dict(existing_timing) if isinstance(existing_timing, dict) else {}
+            )
+            if isinstance(image_timing, dict):
+                transport_timing.update(image_timing)
+            transport_timing.update({
                 "client_request_sent_at": request_sent_at,
                 "inference_generation": request_generation,
                 "server_request_received_at": server_request_received_at,
@@ -3058,7 +3090,7 @@ class TelemetryPolicy:
                 "model_inference_ms": model_inference_s * 1000.0,
                 "observation_upload_ms": observation_upload_ms,
                 "server_observation_upload_ms": observation_upload_ms,
-            }
+            })
             result["transport_timing"] = transport_timing
             result["execution_control"] = self.telemetry.execution_control()
             try:
@@ -3125,9 +3157,17 @@ def run_serve(args: argparse.Namespace) -> None:
         )
     else:
         policy_metadata["rtc_enabled"] = False
+    policy_metadata["image_transport"] = server_image_transport_metadata(
+        preferred=args.preferred_image_transport,
+        jpeg_quality=args.jpeg_quality,
+    )
     if args.telemetry_dir:
         telemetry = PolicyTelemetry(Path(args.telemetry_dir).expanduser().resolve(), policy_metadata)
         policy = TelemetryPolicy(policy, telemetry)
+        # Decode before handing off to the telemetry wrapper. The image wrapper
+        # places codec timing in client metadata so it is published with the
+        # result while model_inference_ms remains model-only.
+        policy = ImageTransportPolicy(policy, expected_hw=IMAGE_HW)
         server = TelemetryWebsocketPolicyServer(
             policy=policy,
             host="0.0.0.0",
@@ -3136,6 +3176,7 @@ def run_serve(args: argparse.Namespace) -> None:
             telemetry=telemetry,
         )
     else:
+        policy = ImageTransportPolicy(policy, expected_hw=IMAGE_HW)
         server = websocket_policy_server.WebsocketPolicyServer(
             policy=policy,
             host="0.0.0.0",
@@ -3242,6 +3283,18 @@ def parse_args() -> argparse.Namespace:
     serve.add_argument("--default-prompt", default=None)
     serve.add_argument("--telemetry-dir", default=None)
     serve.add_argument(
+        "--preferred-image-transport",
+        choices=("raw", "jpeg"),
+        default="jpeg",
+        help="preferred observation image encoding; raw remains accepted for old clients",
+    )
+    serve.add_argument(
+        "--jpeg-quality",
+        type=int,
+        default=DEFAULT_JPEG_QUALITY,
+        help="JPEG quality advertised to compatible robot clients",
+    )
+    serve.add_argument(
         "--rtc-enabled",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -3258,6 +3311,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if not args.dataset_id or "/" in args.dataset_id or ".." in args.dataset_id:
         parser.error("--dataset-id must be a single safe LeRobot repository directory name")
+    if hasattr(args, "jpeg_quality") and not 1 <= args.jpeg_quality <= 100:
+        parser.error("--jpeg-quality must be in [1, 100]")
     for name in ("batch_size", "num_workers", "num_train_steps", "save_interval", "log_interval", "fsdp_devices"):
         if hasattr(args, name) and getattr(args, name) <= 0:
             parser.error(f"--{name.replace('_', '-')} must be positive")
