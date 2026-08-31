@@ -80,6 +80,13 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 RTC_CLIENT_MODULE = "bimanual_vla.deployment.client"
 DATA_UPLOAD_MODULE = "bimanual_vla.data.upload"
 EPISODE_VIEWER_MODULE = "bimanual_vla.data.viewer"
+BIMANUAL_CAN_MAPPING_REMINDER = (
+    "数采/推理前请确认物理 CAN 映射：\n"
+    "左臂 -> can0\n"
+    "右臂 -> can1\n\n"
+    "当前配置：左臂 {left}，右臂 {right}\n"
+    "请用 candump 分别观察反馈后再继续。"
+)
 
 
 def load_gui_preferences(path: str | pathlib.Path = GUI_PREFERENCES_PATH) -> dict[str, object]:
@@ -2215,6 +2222,17 @@ class CollectorGUI:
             )
         return (validate_can_name(self.can_var.get()),)
 
+    def _confirm_bimanual_can_mapping(self, phase: str) -> bool:
+        if self.arm_mode != BIMANUAL:
+            return True
+        left = validate_can_name(self.left_can_var.get())
+        right = validate_can_name(self.right_can_var.get())
+        return messagebox.askyesno(
+            f"确认 CAN 映射（{phase}）",
+            BIMANUAL_CAN_MAPPING_REMINDER.format(left=left, right=right),
+            parent=self.root,
+        )
+
     def _ask_can_activation_password(self, can_names: tuple[str, ...]) -> str | None:
         result: dict[str, str | None] = {"password": None}
         dialog = tk.Toplevel(self.root)
@@ -2385,6 +2403,8 @@ class CollectorGUI:
             command, endpoint = self._validate_inference_settings()
         except (ValueError, OSError) as exc:
             messagebox.showerror("Invalid inference settings", str(exc))
+            return
+        if not self._confirm_bimanual_can_mapping("开始推理"):
             return
         self._save_gui_preferences()
         self._append_inference_log("$ " + " ".join(command))
@@ -2655,6 +2675,8 @@ class CollectorGUI:
 
     def start_episode(self):
         if self.session is None or self.recording:
+            return
+        if not self._confirm_bimanual_can_mapping("开始数采"):
             return
         with self.data_lock:
             qpos = None if self.latest_qpos is None else self.latest_qpos.copy()
