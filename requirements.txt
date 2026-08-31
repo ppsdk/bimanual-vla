@@ -22,7 +22,7 @@ torchcodec==0.5
 safetensors==0.8.0
 
 # Piper hardware and Policy transport
-piper_sdk==0.6.1
+piper_sdk==0.6.2
 python-can==4.6.1
 websockets==15.0.1
 openpi-client==0.1.2
