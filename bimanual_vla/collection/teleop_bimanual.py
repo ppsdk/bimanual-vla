@@ -43,12 +43,10 @@ except ModuleNotFoundError:  # Allow contract tooling/tests off the robot host.
     C_PiperInterface_V2 = None  # type: ignore[assignment]
 from bimanual_vla.collection.trajectory import TrajectoryRecorder
 
-# Hardware topology: one USB-CAN bus carries each physical master/slave pair.
-# The Piper node IDs distinguish the two arms on a shared bus.
 DEFAULT_LEFT_MASTER = "can0"
-DEFAULT_LEFT_SLAVE = "can0"
-DEFAULT_RIGHT_MASTER = "can1"
-DEFAULT_RIGHT_SLAVE = "can1"
+DEFAULT_LEFT_SLAVE = "can1"
+DEFAULT_RIGHT_MASTER = "can2"
+DEFAULT_RIGHT_SLAVE = "can3"
 
 # v3 collection default. CLI --fps may override it and metadata follows it.
 RECORD_HZ = DEFAULT_FPS
@@ -367,16 +365,11 @@ def run(args):
     if args.fps <= 0 or args.action_horizon <= 0:
         raise ValueError("--fps and --action-horizon must be positive")
     contract = _episode_contract(args)
-    if args.left_master != args.left_slave or args.right_master != args.right_slave:
-        print(
-            "WARNING: this two-bus setup expects left master/slave on the same "
-            "CAN interface and right master/slave on the same CAN interface."
-        )
     print(
-        "CAN mapping check before master/slave collection: "
-        f"left pair (master+slave) -> {args.left_master} (expected can0), "
-        f"right pair (master+slave) -> {args.right_master} (expected can1). "
-        "Verify each pair with candump before enabling motion."
+        "CAN mapping check before master/slave collection: this legacy entrypoint "
+        "expects one CAN interface per arm (four interfaces). Your two-USB-CAN "
+        "shared-bus topology is supported by the slave-only inference client, "
+        "but teleop-bimanual needs a bus-level refactor before use."
     )
     print("Connecting arms...")
     lm = connect_arm(args.left_master, "left-master")
