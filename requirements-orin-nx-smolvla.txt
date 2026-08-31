@@ -1,0 +1,9 @@
+# Orin NX LeRobot SmolVLA inference environment.
+-r requirements-orin-nx.txt
+
+# LeRobot 0.3.3 pins the SmolVLA-compatible Transformers range. Do not mix
+# this environment with the OpenPI pi environment.
+transformers>=4.50.3,<4.52.0
+accelerate>=1.7.0
+num2words>=0.5.14
+lerobot[smolvla]==0.3.3

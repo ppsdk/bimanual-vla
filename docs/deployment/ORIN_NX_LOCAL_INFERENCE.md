@@ -53,7 +53,10 @@ SmolVLA 的归一化 buffer 随 policy 一起保存在 safetensors 中，不读�
 python3 -m venv /opt/bimanual-vla-nx-venv
 source /opt/bimanual-vla-nx-venv/bin/activate
 # JetPack/NVIDIA Torch 已预装时跳过 torch 安装
-python -m pip install -r requirements-orin-nx.txt
+python -m pip install -r requirements-orin-nx-pi.txt
+
+# 若使用 SmolVLA，单独建立另一个 venv，不要与 OpenPI pi 环境混装：
+# python -m pip install -r requirements-orin-nx-smolvla.txt
 ```
 
 SmolVLA 的 Jetson Torch wheel 必须能执行 `sm_87`。部署前检查：
@@ -77,6 +80,8 @@ bin/bimanual-vla local-policy-check \
 
 检查会验证权重格式、norm stats 路径、profile 与模型系列，并打印最终 WebSocket metadata。它不导入 OpenPI、JAX 或 CUDA 模型。
 
+检查输出还会报告 `model.safetensors` 大小、系统总/可用内存和 CUDA 总显存。16GB NX 的 Linux 报告可能以 GiB 显示，profile gate 会保留 1 GiB 的 SKU 单位换算余量；可用内存不足时仍应先停止桌面、相机预览等非推理进程。
+
 ## 启动本地 Policy server
 
 ```bash
@@ -89,6 +94,7 @@ bin/bimanual-vla local-policy-server \
   --model-variant pi05 \
   --profile orin_nx_16gb \
   --openpi-root /opt/openpi \
+  --precision bf16 \
   --device cuda \
   --port 8000
 ```
@@ -129,7 +135,7 @@ NX 服务端只负责推理和 WebSocket，不负责 Dashboard 授权、Piper CA
 | Profile | 推荐 | 实验性 | 备注 |
 | --- | --- | --- | --- |
 | `orin_nx_8gb` | `pi0`、`smolvla` | 无 | 不建议完整 `pi05`；SmolVLA 需 FP16 实测 |
-| `orin_nx_16gb` | `pi0`、`smolvla` | `pi05` | π0.5 需要实测；可能需要量化、较低并发或更短 horizon |
+| `orin_nx_16gb` | `pi0`、`smolvla` | `pi05` | 16GB 是目标硬件；π0.5 仍需实机加载/延迟验收，可能需要量化、较低并发或更短 horizon |
 
 显存/统一内存不仅包含权重，还包含 vision tower、语言模型、action expert、KV/cache、中间 tensor 和图像预处理。SmolVLA 的约 450M 参数量更适合 8 GB 起步，但具体吞吐仍需 NX 实测；没有实测前，不把 `pi05` 标为 supported，也不把 SmolVLA 的 9.6 FPS 直接当作 Piper 实时控制指标。
 

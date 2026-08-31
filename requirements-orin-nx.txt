@@ -1,11 +1,12 @@
-# Orin NX edge inference dependencies.
+# Orin NX common edge-server dependencies.
 # Do not install the x86_64 workstation requirements.txt on Jetson.
 # Install NVIDIA's JetPack/L4T PyTorch wheel first; its CUDA arch must include sm_87.
+# Choose exactly one model environment after this file:
+#   requirements-orin-nx-pi.txt
+#   requirements-orin-nx-smolvla.txt
+# OpenPI pi and LeRobot SmolVLA require incompatible Transformers versions.
 
-transformers>=4.40.0
-accelerate>=0.28.0
 safetensors>=0.4.0
-lerobot>=0.3.0
 opencv-python-headless>=4.8.0
 Pillow>=10.0.0
 PyYAML>=6.0
