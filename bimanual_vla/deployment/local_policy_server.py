@@ -166,7 +166,7 @@ def build_policy_metadata(
     if backend == "smolvla" and model_variant != "smolvla":
         raise ValueError("SmolVLA backend requires model_variant='smolvla'")
     if backend == "pi" and model_variant == "smolvla":
-        raise ValueError("model_variant='smolvla' requires backend='pi0' or 'pi05'")
+        raise ValueError("model_variant='smolvla' requires backend='smolvla'")
     if backend == "smolvla" and schema != "joint":
         raise ValueError("SmolVLA edge backend currently supports the joint schema only")
     if backend == "smolvla" and rtc_enabled:
@@ -625,7 +625,17 @@ def _build_openpi_policy(args: argparse.Namespace, metadata: dict[str, Any], che
                 action_sequence_keys=("action",),
             )
 
+    precision = getattr(args, "precision", "auto")
+    if precision == "auto":
+        precision = "bf16" if str(args.device).startswith("cuda") else "fp32"
+    if precision == "fp16":
+        raise ValueError(
+            "OpenPI pi backend does not support fp16; use --precision bf16 or --precision fp32"
+        )
+    if precision not in {"bf16", "fp32"}:
+        raise ValueError(f"unsupported OpenPI precision {precision!r}")
     model_cfg = pi0_config.Pi0Config(
+        dtype="bfloat16" if precision == "bf16" else "float32",
         pi05=args.model_variant == "pi05",
         action_dim=32,
         action_horizon=int(metadata["action_horizon"]),
@@ -657,6 +667,16 @@ def _build_openpi_policy(args: argparse.Namespace, metadata: dict[str, Any], che
         default_prompt=args.default_prompt,
         pytorch_device=args.device,
     )
+    if precision == "fp32":
+        model = getattr(policy, "_model", None)
+        converter = getattr(
+            getattr(model, "paligemma_with_expert", None),
+            "to_bfloat16_for_selected_params",
+            None,
+        )
+        if not callable(converter):
+            raise RuntimeError("OpenPI policy does not expose the precision conversion API required for fp32")
+        converter("float32")
     if args.rtc_enabled:
         reanchor_mask = None
         if schema == "joint":
@@ -822,7 +842,7 @@ def _build_smolvla_policy(args: argparse.Namespace, metadata: dict[str, Any], ch
     _install_transformers_jetson_workarounds()
     try:
         from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
-        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy, standardise_state_dict
     except Exception as exc:
         raise RuntimeError(
             "SmolVLA backend requires LeRobot's smolvla extra and transformers; "
@@ -858,12 +878,58 @@ def _build_smolvla_policy(args: argparse.Namespace, metadata: dict[str, Any], ch
             "SmolVLA checkpoint image features do not match Piper camera contract: "
             f"declared={list(image_features)!r}, expected={list(expected_image_features)!r}"
         )
+    for feature_name in expected_image_features:
+        shape = tuple(config.image_features[feature_name].shape)
+        if len(shape) != 3 or shape[0] != 3:
+            raise ValueError(
+                "SmolVLA Piper camera features must be channel-first RGB (3,H,W): "
+                f"{feature_name} has shape {shape!r}"
+            )
     config.chunk_size = max(16, int(config.chunk_size))
     config.n_action_steps = config.chunk_size
     policy = SmolVLAPolicy(config)
-    SmolVLAPolicy._load_as_safetensor(policy, str(checkpoint / "model.safetensors"), "cpu", strict=False)
-    if device.startswith("cuda"):
+    weights_path = checkpoint / "model.safetensors"
+    SmolVLAPolicy._load_as_safetensor(policy, str(weights_path), "cpu", strict=False)
+    # LeRobot's generic loader intentionally skips normalization buffers. The
+    # inference path needs the buffers embedded in this exact artifact.
+    from safetensors.torch import load_file
+
+    state_dict = load_file(str(weights_path), device="cpu")
+    normalized_state, _ = standardise_state_dict(state_dict, set(policy.state_dict().keys()))
+    norm_prefixes = ("normalize_inputs.", "normalize_targets.", "unnormalize_outputs.")
+    norm_state = {
+        key: value for key, value in normalized_state.items() if key.startswith(norm_prefixes)
+    }
+    required_prefixes = ("normalize_inputs.", "unnormalize_outputs.")
+    missing_required = [
+        prefix for prefix in required_prefixes if not any(key.startswith(prefix) for key in norm_state)
+    ]
+    if missing_required:
+        raise ValueError(
+            "SmolVLA checkpoint is missing required normalization buffers: "
+            + ", ".join(missing_required)
+        )
+    missing, unexpected = policy.load_state_dict(norm_state, strict=False)
+    missing_required = [key for key in missing if key.startswith(required_prefixes)]
+    unexpected_norm = [key for key in unexpected if key.startswith(norm_prefixes)]
+    if missing_required or unexpected_norm:
+        raise RuntimeError(
+            "could not restore SmolVLA normalization buffers; "
+            f"missing={missing_required!r}, unexpected={unexpected_norm!r}"
+        )
+    precision = getattr(args, "precision", "auto")
+    if precision == "auto":
+        precision = "fp16" if device.startswith("cuda") else "fp32"
+    if precision == "fp16":
+        if not device.startswith("cuda"):
+            raise ValueError("--precision fp16 requires a CUDA device")
         policy = policy.half()
+    elif precision == "bf16":
+        if not device.startswith("cuda"):
+            raise ValueError("--precision bf16 requires a CUDA device")
+        policy = policy.bfloat16()
+    elif precision != "fp32":
+        raise ValueError(f"unsupported precision {precision!r}")
     policy = policy.to(device)
     policy.eval()
     return _SmolVLAPolicyAdapter(
@@ -988,6 +1054,12 @@ def _add_common(parser: argparse.ArgumentParser, *, serve: bool) -> None:
         parser.add_argument("--port", type=int, default=8000)
         parser.add_argument("--device", default="auto")
         parser.add_argument("--allow-cpu", action="store_true", help="allow a CPU server for smoke tests")
+        parser.add_argument(
+            "--precision",
+            choices=("auto", "fp16", "bf16", "fp32"),
+            default="auto",
+            help="model dtype; OpenPI uses BF16/FP32, SmolVLA supports FP16/BF16/FP32",
+        )
         parser.add_argument("--default-prompt", default=None)
         parser.add_argument("--paligemma-variant", default="gemma_2b_lora")
         parser.add_argument("--action-expert-variant", default="gemma_300m_lora")

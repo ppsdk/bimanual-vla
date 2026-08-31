@@ -202,6 +202,33 @@ class LocalPolicyServerTest(unittest.TestCase):
         self.assertEqual(args.command, "check")
         self.assertEqual(args.profile, "orin_nx_16gb")
 
+        serve_args = parse_args(
+            [
+                "serve",
+                "--checkpoint",
+                "/tmp/ckpt",
+                "--dataset-id",
+                "demo",
+                "--schema",
+                "joint",
+                "--precision",
+                "bf16",
+            ]
+        )
+        self.assertEqual(serve_args.precision, "bf16")
+
+        with self.assertRaisesRegex(ValueError, "requires backend='smolvla'"):
+            build_policy_metadata(
+                schema="joint",
+                arm_mode="bimanual",
+                arm_side="both",
+                dataset_id="demo",
+                model_variant="smolvla",
+                backend="pi",
+                checkpoint="/tmp/demo",
+                profile="orin_nx_16gb",
+            )
+
         smol_args = parse_args(
             [
                 "check",
