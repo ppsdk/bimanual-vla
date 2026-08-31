@@ -35,6 +35,8 @@ conda activate dual_arm
 
 ### 2.1 检查 CAN
 
+本项目的双臂主从硬件使用两路 USB-CAN：左侧主臂和从臂共享 `can0`，右侧主臂和从臂共享 `can1`。Piper 节点 ID 用于区分同一总线上的主臂与从臂，不要为四个机械臂配置四个 CAN 接口。
+
 查看 CAN 接口：
 
 ```bash
