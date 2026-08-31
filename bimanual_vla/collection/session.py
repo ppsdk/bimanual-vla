@@ -1,4 +1,9 @@
-"""UI-neutral state machine for Piper data collection."""
+"""UI-neutral state machine for Piper output-arm data collection.
+
+The deployed bimanual topology has two USB-CAN buses: the left master/slave
+pair shares ``can0`` and the right master/slave pair shares ``can1``. This
+session connects only the two slave/output arms.
+"""
 
 from __future__ import annotations
 

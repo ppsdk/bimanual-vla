@@ -1,5 +1,9 @@
 """Collect measured Piper output-arm feedback and synchronized RGB cameras.
 
+For the deployed bimanual topology, the left master/slave pair shares ``can0``
+and the right master/slave pair shares ``can1``. This collector connects only
+the two slave/output arms; the master arms are not part of this path.
+
 Supported raw contracts:
 
 * single + delivery: 10D state / 10D absolute EEF fallback target / 2 cameras;

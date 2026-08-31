@@ -107,7 +107,9 @@ session.
 
 ## 5. CAN Setup
 
-Connect and power the Piper arms before activating their CAN interfaces.
+Connect and power the Piper arms before activating their CAN interfaces. Each
+side's master/slave pair shares one USB-CAN bus: left pair `can0`, right pair
+`can1`. GUI collection and RTC inference connect only the two slave/output arms.
 Identify the adapters:
 
 ```bash

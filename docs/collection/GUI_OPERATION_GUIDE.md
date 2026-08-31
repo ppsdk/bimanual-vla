@@ -36,7 +36,7 @@ timeout 2 candump -L can1
 - 两个 `candump` 都能持续收到对应机械臂反馈。
 - CAN 波特率为 `1000000`。
 
-GUI 中先点击 `Activate CAN`，输入管理员密码后会激活并验证两个接口。当前固定映射为左臂 `can0`、右臂 `can1`；即使系统枚举顺序变化，激活流程也会按 USB 物理端口恢复映射。没有双臂实时反馈时不要开始采集。
+GUI 中先点击 `Activate CAN`，输入管理员密码后会激活并验证两个接口。硬件拓扑是左侧主从臂共享 `can0`、右侧主从臂共享 `can1`；当前 GUI 数采只连接两只从臂/输出臂。即使系统枚举顺序变化，激活流程也会按 USB 物理端口恢复映射。没有双臂实时反馈时不要开始采集。
 
 点击 `Start Episode` 开始数采、或点击 `Start inference` 开始推理前，GUI 会再次要求确认物理映射：左从臂/输出臂 -> `can0`，右从臂/输出臂 -> `can1`。推理客户端只连接两只从臂，不连接主臂；推理开始前应将主臂从对应 CAN 总线断开，避免竞争控制。如果实际接口不同，先停止操作并用 `candump`、USB bus-info 和机械臂反馈核对，不能仅凭接口名称继续。
 
@@ -67,7 +67,7 @@ bash start_gui.sh
 
 | GUI 字段 | 建议值 | 说明 |
 |---|---|---|
-| `Left-arm CAN` / `Right-arm CAN` | `can0` / `can1` | 左右臂 CAN 接口 |
+| `Left-arm CAN` / `Right-arm CAN` | `can0` / `can1` | 左右侧主从共享的 CAN 总线；GUI 数采/推理只连接左右从臂 |
 | `Collection rate (Hz)` | `20` | 数据采集频率 |
 | `Camera rate (Hz)` | `30` | 相机原始流频率 |
 | `Dataset root` | `.../episodes_piper_v21` | 数据集父目录 |

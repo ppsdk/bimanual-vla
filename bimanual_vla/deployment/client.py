@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Canonical robot-side RTC (real-time control) client.
 
+For bimanual inference, the left master/slave pair's bus is ``can0`` and the
+right pair's bus is ``can1``; this client connects only the two slave/output
+arms and never the teaching/master arms.
+
 This executable owns the physical control path: Piper CAN feedback and command
 I/O, camera capture, OpenPI WebSocket inference, timestamped action chunks, an
 independent 20 Hz servo loop, and fail-closed safety gates.  The historical
