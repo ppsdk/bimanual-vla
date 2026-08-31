@@ -93,7 +93,7 @@ Module responsibilities:
 | CAN bitrate | `1,000,000 bit/s` |
 | Control frequency | `20 Hz` |
 | Typical bimanual mapping | Left arm `can0`, right arm `can1`; verify after connecting hardware |
-| Master/slave teleoperation | Up to four CAN interfaces: `can0` to `can3` |
+| Master/slave teleoperation | Two USB-CAN buses: left master+slave on `can0`, right master+slave on `can1` |
 
 ### Sensors
 
