@@ -32,8 +32,8 @@ Data:
 Deployment:
   rtc-client         Run the canonical robot-side RTC client
   legacy-bridge      Compatibility alias for rtc-client
-  local-policy-check Inspect an edge checkpoint/profile without loading a model
-  local-policy-server Serve OpenPI inference from a local edge GPU
+  local-policy-check Inspect an RTX 5060 checkpoint/profile without loading a model
+  local-policy-server Serve OpenPI/SmolVLA inference from the local RTX 5060
 EOF
 }
 

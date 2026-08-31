@@ -6,20 +6,20 @@ import tempfile
 import unittest
 
 from bimanual_vla.deployment.local_policy_server import (
-    NX_PROFILES,
+    RTX5060_PROFILES,
     build_policy_metadata,
     check_device,
-    get_nx_profile,
+    get_rtx5060_profile,
     inspect_checkpoint,
     parse_args,
 )
 
 
 class LocalPolicyServerTest(unittest.TestCase):
-    def test_profiles_are_conservative(self):
-        self.assertEqual(get_nx_profile("orin_nx_8gb").recommended_models, ("pi0", "smolvla"))
-        self.assertIn("pi05", get_nx_profile("orin_nx_16gb").experimental_models)
-        self.assertEqual(set(NX_PROFILES), {"orin_nx_8gb", "orin_nx_16gb"})
+    def test_rtx5060_profile_is_conservative(self):
+        self.assertEqual(get_rtx5060_profile("rtx5060_8gb").recommended_models, ("pi0", "smolvla"))
+        self.assertIn("pi05", get_rtx5060_profile("rtx5060_8gb").experimental_models)
+        self.assertEqual(set(RTX5060_PROFILES), {"rtx5060_8gb"})
 
     def test_build_bimanual_joint_metadata_matches_client_contract(self):
         metadata = build_policy_metadata(
@@ -29,12 +29,13 @@ class LocalPolicyServerTest(unittest.TestCase):
             dataset_id="demo",
             model_variant="pi0",
             checkpoint="/tmp/demo",
-            profile="orin_nx_8gb",
+            profile="rtx5060_8gb",
         )
         self.assertEqual(metadata["state_dim"], 14)
         self.assertEqual(metadata["action_dim"], 14)
         self.assertEqual(metadata["camera_keys"], ["cam_high", "cam_left_wrist", "cam_right_wrist"])
         self.assertEqual(metadata["transport"], "openpi_websocket_v1")
+        self.assertEqual(metadata["deployment_target"], "rtx5060")
         self.assertEqual(metadata["rtc_enabled"], False)
 
     def test_build_single_delivery_metadata(self):
@@ -45,7 +46,7 @@ class LocalPolicyServerTest(unittest.TestCase):
             dataset_id="demo",
             model_variant="pi05",
             checkpoint="/tmp/demo",
-            profile="orin_nx_16gb",
+            profile="rtx5060_8gb",
             rtc_enabled=True,
         )
         self.assertEqual(metadata["state_dim"], 10)
@@ -63,7 +64,7 @@ class LocalPolicyServerTest(unittest.TestCase):
             model_variant="smolvla",
             backend="smolvla",
             checkpoint="/tmp/smol",
-            profile="orin_nx_8gb",
+            profile="rtx5060_8gb",
         )
         self.assertEqual(metadata["inference_backend"], "smolvla")
         self.assertFalse(metadata["rtc_enabled"])
@@ -84,7 +85,7 @@ class LocalPolicyServerTest(unittest.TestCase):
                 model_variant="smolvla",
                 backend="smolvla",
                 checkpoint="/tmp/smol",
-                profile="orin_nx_8gb",
+                profile="rtx5060_8gb",
             )
         with self.assertRaises(ValueError):
             build_policy_metadata(
@@ -95,7 +96,7 @@ class LocalPolicyServerTest(unittest.TestCase):
                 model_variant="smolvla",
                 backend="smolvla",
                 checkpoint="/tmp/smol",
-                profile="orin_nx_8gb",
+                profile="rtx5060_8gb",
                 rtc_enabled=True,
             )
 
@@ -127,8 +128,10 @@ class LocalPolicyServerTest(unittest.TestCase):
             self.assertEqual(Path(report["norm_stats"]), stats)
 
     def test_cpu_check_does_not_require_openpi(self):
-        result = check_device(profile="orin_nx_16gb", device="cpu", model_variant="pi05")
+        result = check_device(profile="rtx5060_8gb", device="cpu", model_variant="pi05")
         self.assertEqual(result["device"], "cpu")
+        self.assertEqual(result["profile_support"], "experimental")
+        self.assertEqual(result["minimum_cuda_memory_gb"], 7.0)
         self.assertEqual(result["memory_check"], "not_available")
 
     def test_cli_has_separate_check_and_serve_modes(self):
@@ -144,7 +147,22 @@ class LocalPolicyServerTest(unittest.TestCase):
             ]
         )
         self.assertEqual(args.command, "check")
-        self.assertEqual(args.profile, "orin_nx_16gb")
+        self.assertEqual(args.profile, "rtx5060_8gb")
+
+        serve_args = parse_args(
+            [
+                "serve",
+                "--checkpoint",
+                "/tmp/ckpt",
+                "--dataset-id",
+                "demo",
+                "--schema",
+                "joint",
+                "--precision",
+                "bf16",
+            ]
+        )
+        self.assertEqual(serve_args.precision, "bf16")
 
         smol_args = parse_args(
             [

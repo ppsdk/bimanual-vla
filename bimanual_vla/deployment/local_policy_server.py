@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local OpenPI policy server for edge GPUs such as Orin NX.
+"""Local OpenPI policy server for an RTX 5060 inference node.
 
 The edge path deliberately has no dependency on the 4090 training/dashboard
 entrypoint.  ``check`` only inspects a staged PyTorch checkpoint and the
@@ -48,8 +48,8 @@ DEFAULT_ACTION_HZ = 20.0
 
 
 @dataclasses.dataclass(frozen=True)
-class OrinNXProfile:
-    """Conservative deployment envelope, not a performance guarantee."""
+class RTX5060Profile:
+    """Conservative RTX 5060 deployment envelope, not a performance guarantee."""
 
     name: str
     memory_gb: int
@@ -59,36 +59,30 @@ class OrinNXProfile:
     action_horizon: int = DEFAULT_ACTION_HORIZON
     compile_mode: str | None = None
     minimum_system_memory_gb: int = 12
+    minimum_cuda_memory_gb: float = 7.0
 
     def allows(self, model_variant: str) -> bool:
         return model_variant in self.recommended_models or model_variant in self.experimental_models
 
 
-NX_PROFILES: Mapping[str, OrinNXProfile] = {
-    "orin_nx_8gb": OrinNXProfile(
-        name="orin_nx_8gb",
+RTX5060_PROFILES: Mapping[str, RTX5060Profile] = {
+    "rtx5060_8gb": RTX5060Profile(
+        name="rtx5060_8gb",
         memory_gb=8,
-        recommended_models=("pi0", "smolvla"),
-        experimental_models=(),
-        compile_mode=None,
-        minimum_system_memory_gb=10,
-    ),
-    "orin_nx_16gb": OrinNXProfile(
-        name="orin_nx_16gb",
-        memory_gb=16,
         recommended_models=("pi0", "smolvla"),
         experimental_models=("pi05",),
         compile_mode=None,
         minimum_system_memory_gb=16,
+        minimum_cuda_memory_gb=7.0,
     ),
 }
 
 
-def get_nx_profile(name: str) -> OrinNXProfile:
+def get_rtx5060_profile(name: str) -> RTX5060Profile:
     try:
-        return NX_PROFILES[str(name).strip().lower()]
+        return RTX5060_PROFILES[str(name).strip().lower()]
     except KeyError as exc:
-        raise ValueError(f"unknown Orin NX profile {name!r}; choose {sorted(NX_PROFILES)}") from exc
+        raise ValueError(f"unknown RTX 5060 profile {name!r}; choose {sorted(RTX5060_PROFILES)}") from exc
 
 
 def _arm_count(arm_mode: str) -> int:
@@ -142,6 +136,7 @@ def build_policy_metadata(
     schema = str(schema).strip().lower()
     arm_mode = str(arm_mode).strip().lower()
     arm_side = "both" if arm_mode == "bimanual" else str(arm_side).strip().lower()
+    get_rtx5060_profile(profile)
     state_dim, action_dim = _contract_dimensions(schema, arm_mode)
     cameras = _camera_keys(arm_mode, arm_side)
     if int(action_horizon) <= 0 or float(action_hz) <= 0:
@@ -172,7 +167,7 @@ def build_policy_metadata(
 
     return {
         "robot_type": "piper_bimanual" if arm_mode == "bimanual" else "piper_single_arm",
-        "deployment_target": "orin_nx",
+        "deployment_target": "rtx5060",
         "deployment_profile": str(profile),
         "dataset_id": str(dataset_id),
         "checkpoint": str(Path(checkpoint).expanduser().resolve()),
@@ -349,14 +344,14 @@ def inspect_checkpoint(
 
 
 def check_device(*, profile: str, device: str = "auto", model_variant: str = "pi05", torch_module: Any | None = None) -> dict[str, Any]:
-    """Check an edge profile before importing/loading the model."""
+    """Check the RTX 5060 profile before importing/loading the model."""
 
     selected = str(device).strip().lower()
     if selected == "auto":
         selected = "cuda" if _torch_cuda_available(torch_module) else "cpu"
     if selected.startswith("cuda") and not _torch_cuda_available(torch_module):
         raise RuntimeError("CUDA was requested but torch.cuda.is_available() is false")
-    profile_info = get_nx_profile(profile)
+    profile_info = get_rtx5060_profile(profile)
     if not profile_info.allows(model_variant):
         raise RuntimeError(
             f"{model_variant} is not in the {profile_info.name} edge envelope; "
@@ -366,7 +361,11 @@ def check_device(*, profile: str, device: str = "auto", model_variant: str = "pi
         "profile": profile_info.name,
         "device": selected,
         "model_variant": model_variant,
+        "profile_support": (
+            "recommended" if model_variant in profile_info.recommended_models else "experimental"
+        ),
         "profile_memory_gb": profile_info.memory_gb,
+        "minimum_cuda_memory_gb": profile_info.minimum_cuda_memory_gb,
         "memory_check": "not_available",
     }
     if selected.startswith("cuda"):
@@ -376,11 +375,12 @@ def check_device(*, profile: str, device: str = "auto", model_variant: str = "pi
         props = torch.cuda.get_device_properties(index)
         total_gb = float(props.total_memory) / (1024**3)
         result.update({"cuda_device_name": str(props.name), "cuda_total_memory_gb": round(total_gb, 2)})
-        # Jetson reports binary GiB while the SKU is usually advertised in
-        # decimal GB. Keep a 1 GiB unit-conversion margin at the profile gate.
-        if total_gb + 1.0 < profile_info.memory_gb:
+        # An advertised 8 GB board commonly reports about 7.5 GiB after the
+        # binary-unit conversion and reserved framebuffer pages.
+        if total_gb < profile_info.minimum_cuda_memory_gb:
             raise RuntimeError(
-                f"GPU reports {total_gb:.2f} GiB, below profile {profile_info.memory_gb} GiB"
+                f"GPU reports {total_gb:.2f} GiB, below profile minimum "
+                f"{profile_info.minimum_cuda_memory_gb:.2f} GiB"
             )
         result["memory_check"] = "ok"
     return result
@@ -719,17 +719,15 @@ class EdgeWebsocketPolicyServer:
 
 
 def _build_smolvla_policy(args: argparse.Namespace, metadata: dict[str, Any], checkpoint: Path) -> Any:
-    """Load a LeRobot SmolVLA artifact with Jetson-safe ordering and FP16."""
+    """Load a LeRobot SmolVLA artifact with ordinary CUDA-safe ordering."""
 
-    os.environ.setdefault("PYTORCH_NO_CUDA_MEMORY_CACHING", "1")
-    _install_transformers_jetson_workarounds()
     try:
         from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
     except Exception as exc:
         raise RuntimeError(
             "SmolVLA backend requires LeRobot's smolvla extra and transformers; "
-            "install them in the Jetson environment"
+            "install them in the RTX 5060 inference environment"
         ) from exc
 
     device = str(args.device)
@@ -762,8 +760,19 @@ def _build_smolvla_policy(args: argparse.Namespace, metadata: dict[str, Any], ch
     config.n_action_steps = config.chunk_size
     policy = SmolVLAPolicy(config)
     SmolVLAPolicy._load_as_safetensor(policy, str(checkpoint / "model.safetensors"), "cpu", strict=False)
-    if device.startswith("cuda"):
+    precision = getattr(args, "precision", "auto")
+    if precision == "auto":
+        precision = "fp16" if device.startswith("cuda") else "fp32"
+    if precision == "fp16":
+        if not device.startswith("cuda"):
+            raise ValueError("--precision fp16 requires a CUDA device")
         policy = policy.half()
+    elif precision == "bf16":
+        if not device.startswith("cuda"):
+            raise ValueError("--precision bf16 requires a CUDA device")
+        policy = policy.bfloat16()
+    elif precision != "fp32":
+        raise ValueError(f"unsupported precision {precision!r}")
     policy = policy.to(device)
     policy.eval()
     return _SmolVLAPolicyAdapter(
@@ -774,17 +783,6 @@ def _build_smolvla_policy(args: argparse.Namespace, metadata: dict[str, Any], ch
         image_features=image_features,
         instruction=args.default_prompt,
     )
-
-
-def _install_transformers_jetson_workarounds() -> None:
-    """Avoid Jetson unified-memory allocator probes during Transformers import."""
-
-    try:
-        import transformers.modeling_utils as modeling_utils
-
-        modeling_utils.caching_allocator_warmup = lambda *args, **kwargs: None
-    except Exception:
-        return
 
 
 def _merge_runtime_metadata(args: argparse.Namespace, checkpoint: Path) -> dict[str, Any]:
@@ -878,8 +876,8 @@ def _add_common(parser: argparse.ArgumentParser, *, serve: bool) -> None:
     parser.add_argument("--arm-mode", choices=("single", "bimanual"), default="bimanual")
     parser.add_argument("--arm-side", choices=("left", "right", "both"), default="both")
     parser.add_argument("--backend", choices=("pi", "smolvla"), default="pi")
-    parser.add_argument("--model-variant", choices=("pi0", "pi05", "smolvla"), default="pi05")
-    parser.add_argument("--profile", choices=tuple(sorted(NX_PROFILES)), default="orin_nx_16gb")
+    parser.add_argument("--model-variant", choices=("pi0", "pi05", "smolvla"), default="pi0")
+    parser.add_argument("--profile", choices=tuple(sorted(RTX5060_PROFILES)), default="rtx5060_8gb")
     parser.add_argument("--metadata", default=None)
     parser.add_argument("--norm-stats", default=None)
     if serve:
@@ -892,6 +890,12 @@ def _add_common(parser: argparse.ArgumentParser, *, serve: bool) -> None:
         parser.add_argument("--paligemma-variant", default="gemma_2b_lora")
         parser.add_argument("--action-expert-variant", default="gemma_300m_lora")
         parser.add_argument("--compile-mode", choices=("none", "default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"), default="none")
+        parser.add_argument(
+            "--precision",
+            choices=("auto", "fp16", "bf16", "fp32"),
+            default="auto",
+            help="model dtype; auto selects CUDA FP16 and CPU FP32",
+        )
         parser.add_argument("--action-horizon", type=int, default=DEFAULT_ACTION_HORIZON)
         parser.add_argument("--action-hz", type=float, default=DEFAULT_ACTION_HZ)
         parser.add_argument("--rtc-enabled", action=argparse.BooleanOptionalAction, default=None)
@@ -901,7 +905,7 @@ def _add_common(parser: argparse.ArgumentParser, *, serve: bool) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Orin NX local OpenPI policy node")
+    parser = argparse.ArgumentParser(description="RTX 5060 local OpenPI policy node")
     sub = parser.add_subparsers(dest="command", required=True)
     check = sub.add_parser("check", help="inspect checkpoint, profile, and policy contract")
     _add_common(check, serve=False)
@@ -986,7 +990,7 @@ def run_serve(args: argparse.Namespace) -> None:
             port=args.port,
             metadata=metadata,
         )
-    LOGGER.info("Orin NX policy server listening on ws://%s:%d", args.host, args.port)
+    LOGGER.info("RTX 5060 policy server listening on ws://%s:%d", args.host, args.port)
     server.serve_forever()
 
 
