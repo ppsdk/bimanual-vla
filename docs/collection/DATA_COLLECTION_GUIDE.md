@@ -35,7 +35,9 @@ conda activate dual_arm
 
 ### 2.1 检查 CAN
 
-本项目的双臂主从硬件使用两路 USB-CAN：左侧主臂和从臂共享 `can0`，右侧主臂和从臂共享 `can1`。当前 GUI 数采读取两只从臂/输出臂；推理客户端也只连接两只从臂。
+本项目的双臂主从硬件使用两路 USB-CAN：左侧主臂和从臂共享 `can0`，右侧主臂和从臂共享 `can1`。`teleop-bimanual` 每侧只创建一个 SDK 连接：从 `0x2Ax` 反馈帧读取从臂状态，从 `0x15x` 控制帧读取主臂 action。当前 GUI 数采读取两只从臂/输出臂；推理客户端也只连接两只从臂，这两个路径不使用 `teleop-bimanual`。
+
+主从角色不能在两臂已经共享总线时由同一个 SDK 连接分别设置。首次配置时应将主臂和从臂分开连接，分别执行 `MasterSlaveConfig(0xFA, ...)` 和 `MasterSlaveConfig(0xFC, ...)`；随后接成共享总线，并按“先从臂、后主臂”的顺序上电。`teleop-bimanual` 不会在启动或退出时改写主从角色。
 
 查看 CAN 接口：
 
