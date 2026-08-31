@@ -1,0 +1,18 @@
+# Orin NX edge inference dependencies.
+# Do not install the x86_64 workstation requirements.txt on Jetson.
+# Install NVIDIA's JetPack/L4T PyTorch wheel first; its CUDA arch must include sm_87.
+
+transformers>=4.40.0
+accelerate>=0.28.0
+safetensors>=0.4.0
+lerobot>=0.3.0
+opencv-python-headless>=4.8.0
+Pillow>=10.0.0
+PyYAML>=6.0
+psutil>=5.9.0
+websockets>=15.0.0
+openpi-client>=0.1.0
+
+# Optional only for local camera capture/diagnostics. The policy server itself
+# does not import Piper SDK or ROS2.
+# piper_sdk>=0.6.1

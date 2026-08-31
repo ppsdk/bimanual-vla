@@ -32,6 +32,8 @@ Data:
 Deployment:
   rtc-client         Run the canonical robot-side RTC client
   legacy-bridge      Compatibility alias for rtc-client
+  local-policy-check Inspect an edge checkpoint/profile without loading a model
+  local-policy-server Serve OpenPI inference from a local edge GPU
 EOF
 }
 
@@ -56,6 +58,8 @@ case "$command_name" in
   data-view) module="bimanual_vla.data.viewer" ;;
   rtc-client) module="bimanual_vla.deployment.client" ;;
   legacy-bridge) module="bimanual_vla.deployment.legacy_bridge" ;;
+  local-policy-check) module="bimanual_vla.deployment.local_policy_server"; set -- check "$@" ;;
+  local-policy-server) module="bimanual_vla.deployment.local_policy_server"; set -- serve "$@" ;;
   -h|--help|help)
     usage
     exit 0
