@@ -82,9 +82,9 @@ DATA_UPLOAD_MODULE = "bimanual_vla.data.upload"
 EPISODE_VIEWER_MODULE = "bimanual_vla.data.viewer"
 BIMANUAL_CAN_MAPPING_REMINDER = (
     "数采/推理前请确认物理 CAN 映射：\n"
-    "左臂 -> can0\n"
-    "右臂 -> can1\n\n"
-    "当前配置：左臂 {left}，右臂 {right}\n"
+    "左从臂/输出臂 -> can0\n"
+    "右从臂/输出臂 -> can1\n\n"
+    "当前配置：左从臂 {left}，右从臂 {right}\n"
     "请用 candump 分别观察反馈后再继续。"
 )
 

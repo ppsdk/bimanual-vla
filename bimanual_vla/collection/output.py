@@ -457,8 +457,8 @@ def run(args) -> None:
     if args.arm_mode == BIMANUAL:
         print(
             "CAN mapping check before data collection: confirm physical "
-            f"left arm -> {args.left_can} (expected can0), "
-            f"right arm -> {args.right_can} (expected can1); "
+            f"left slave/output arm -> {args.left_can} (expected can0), "
+            f"right slave/output arm -> {args.right_can} (expected can1); "
             "verify with candump before commanding either arm."
         )
     print(
