@@ -1,5 +1,7 @@
 # 实机 RTC（Real-Time Chunking）部署指南
 
+双臂推理阶段只连接两只从臂/输出臂，仍使用两路 CAN：左从臂 -> `can0`，右从臂 -> `can1`。主臂只在主从遥操作采集阶段使用，不应接入 RTC 推理客户端。
+
 这里的 RTC 指 **Real-Time Chunking**，不是单纯的实时控制客户端。
 它用于补偿相机采集、网络传输和模型推理造成的 action chunk 延迟：
 

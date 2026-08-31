@@ -4774,9 +4774,9 @@ def run_rtc_client(args: argparse.Namespace) -> None:
         args.rtc_session_id = uuid.uuid4().hex
     if args.arm_mode == "bimanual":
         logging.warning(
-            "CAN mapping check before inference: confirm physical left arm -> %s "
-            "(expected can0), right arm -> %s (expected can1); verify with candump "
-            "before enabling execution.",
+            "CAN mapping check before inference: confirm physical left slave/output "
+            "arm -> %s (expected can0), right slave/output arm -> %s (expected can1); "
+            "verify with candump before enabling execution.",
             args.left_can,
             args.right_can,
         )

@@ -214,6 +214,8 @@ Action queue + safety       <-WebSocket-- Timestamped action chunk
 Start the Dashboard/Policy stack on a configured inference server, then run the
 robot client in **shadow mode** first:
 
+双臂推理只连接两只从臂/输出臂：左从臂使用 `can0`，右从臂使用 `can1`；主臂只用于主从遥操作采集，不接入 RTC 推理客户端。
+
 ```bash
 export BIMANUAL_VLA_POLICY_HOST="<policy-server-host>"
 
