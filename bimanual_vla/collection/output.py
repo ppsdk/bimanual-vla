@@ -454,6 +454,13 @@ def run(args) -> None:
         action_alignment="next_observation",
     )
     can_summary = args.can if args.arm_mode == SINGLE_ARM else f"{args.left_can},{args.right_can}"
+    if args.arm_mode == BIMANUAL:
+        print(
+            "CAN mapping check before data collection: confirm physical "
+            f"left arm -> {args.left_can} (expected can0), "
+            f"right arm -> {args.right_can} (expected can1); "
+            "verify with candump before commanding either arm."
+        )
     print(
         f"Connecting {contract.robot_type} output arm(s) on {can_summary}; "
         f"schema={contract.schema} state={contract.state_dim} action={contract.action_dim} ..."

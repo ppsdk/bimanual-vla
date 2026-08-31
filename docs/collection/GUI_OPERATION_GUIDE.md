@@ -38,6 +38,8 @@ timeout 2 candump -L can1
 
 GUI 中先点击 `Activate CAN`，输入管理员密码后会激活并验证两个接口。当前固定映射为左臂 `can0`、右臂 `can1`；即使系统枚举顺序变化，激活流程也会按 USB 物理端口恢复映射。没有双臂实时反馈时不要开始采集。
 
+点击 `Start Episode` 开始数采、或点击 `Start inference` 开始推理前，GUI 会再次要求确认物理映射：左臂 -> `can0`，右臂 -> `can1`。如果实际接口不同，先停止操作并用 `candump`、USB bus-info 和机械臂反馈核对，不能仅凭接口名称继续。
+
 ### 1.2 检查相机
 
 ```bash
@@ -323,7 +325,7 @@ unset BIMANUAL_VLA_SERVER_TOKEN
 
 推理页默认启动 `bimanual_vla/deployment/client.py`。Policy host、port、推理频率、Arm mode、Arm side
 和 Instruction 都可以在页面修改；CAN 与三路相机沿用 `Device settings...` 中的当前配置。
-`Activate CAN` 会同时激活当前配置的左、右 CAN 接口。启动前确认两个接口均为 `UP` 并有反馈。
+`Activate CAN` 会同时激活当前配置的左、右 CAN 接口。启动前确认两个接口均为 `UP` 并有反馈；点击 `Start inference` 前还必须确认左臂 -> `can0`、右臂 -> `can1` 的物理映射。
 如果左右腕部画面对应反了，点击 `Swap left/right wrist cameras`；推理运行中确认重启后，新的映射才会传给桥接器。
 
 `Allow execution` 默认开启。开启只表示允许本地 RTC 客户端在 Dashboard 授权和自身安全检查均通过时执行动作，
