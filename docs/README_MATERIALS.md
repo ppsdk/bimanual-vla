@@ -88,7 +88,7 @@ Module responsibilities:
 | Modes | Single arm and bimanual |
 | Degrees of freedom | 6 revolute joints per arm, plus gripper |
 | End effector | Piper gripper, approximately `0.00-0.07 m` opening range |
-| SDK | `piper_sdk 0.6.1` |
+| SDK | `piper_sdk 0.6.2` |
 | Control interface | SocketCAN through `piper_sdk.C_PiperInterface_V2` |
 | CAN bitrate | `1,000,000 bit/s` |
 | Control frequency | `20 Hz` |
@@ -138,7 +138,7 @@ Python: 3.10.20
 PyTorch: 2.7.1
 LeRobot: 0.3.3
 OpenPI Client: 0.1.0
-Piper SDK: 0.6.1
+Piper SDK: 0.6.2
 NumPy: 2.2.6
 SciPy: 1.15.3
 OpenCV: 4.10.0.84
