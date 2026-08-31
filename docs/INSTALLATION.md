@@ -128,7 +128,8 @@ timeout 2 candump -L can0
 For the current bimanual GUI, repeat the commands for `can1`. Before data
 collection or inference, confirm the physical mapping is left slave/output arm
 -> `can0` and right slave/output arm -> `can1` by watching each arm's feedback
-with `candump`; inference connects only the two slave arms. Interface
+with `candump`; inference connects only the two slave arms, and the master arms
+must be disconnected from those CAN buses. Interface
 numbers can change when USB adapters are reconnected.
 
 The repository can also use the Piper SDK activation helper when that SDK
