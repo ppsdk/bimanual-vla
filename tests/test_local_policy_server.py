@@ -110,6 +110,19 @@ class LocalPolicyServerTest(unittest.TestCase):
             report = inspect_checkpoint(checkpoint, backend="smolvla")
             self.assertEqual(report["format"], "lerobot_smolvla_safetensors")
 
+    def test_smolvla_variant_requires_smolvla_backend(self):
+        with self.assertRaisesRegex(ValueError, "requires backend='smolvla'"):
+            build_policy_metadata(
+                schema="joint",
+                arm_mode="bimanual",
+                arm_side="both",
+                dataset_id="demo",
+                model_variant="smolvla",
+                backend="pi",
+                checkpoint="/tmp/demo",
+                profile="rtx5060_8gb",
+            )
+
     def test_smolvla_checkpoint_rejects_wrong_camera_contract(self):
         with tempfile.TemporaryDirectory() as temp:
             checkpoint = Path(temp)

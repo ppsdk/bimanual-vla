@@ -67,7 +67,7 @@ bin/bimanual-vla local-policy-server \
   --dataset-id piper-bimanual-v1 \
   --schema joint --arm-mode bimanual --arm-side both \
   --model-variant pi0 --profile rtx5060_8gb \
-  --openpi-root /opt/openpi --device cuda --precision fp16 --port 8000
+  --openpi-root /opt/openpi --device cuda --precision bf16 --port 8000
 ```
 
 SmolVLA backend：
@@ -102,6 +102,6 @@ bin/bimanual-vla rtc-client \
 
 | Profile | 推荐 | 实验性 |
 | --- | --- | --- |
-| `rtx5060_8gb` | `pi0`、`smolvla`（FP16） | `pi05` |
+| `rtx5060_8gb` | `pi0`、`smolvla`（OpenPI BF16 / SmolVLA FP16） | `pi05` |
 
 8GB 是显卡标称总显存，驱动通常显示约 7.5 GiB，可用于模型的显存还会更少。vision tower、语言模型、action expert、KV/cache 和预处理都会占用空间；不要把未经本机实测的 FPS 或控制频率写成保证值。默认关闭 `torch.compile`，稳定后才考虑显式指定编译模式。
