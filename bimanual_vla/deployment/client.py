@@ -5441,8 +5441,14 @@ def main() -> None:
         ),
     )
     parser.add_argument("--can", default=DEFAULT_CAN, help="single-arm CAN interface")
-    parser.add_argument("--left-can", default=DEFAULT_LEFT_CAN)
-    parser.add_argument("--right-can", default=DEFAULT_RIGHT_CAN)
+    parser.add_argument(
+        "--left-can", default=DEFAULT_LEFT_CAN,
+        help="left slave/output arm CAN for inference (default: can0)",
+    )
+    parser.add_argument(
+        "--right-can", default=DEFAULT_RIGHT_CAN,
+        help="right slave/output arm CAN for inference (default: can1)",
+    )
     parser.add_argument("--arm-side", choices=("left", "right", "both"), default="right")
     parser.add_argument("--cam-high-device", default=DEFAULT_HIGH_DEVICE)
     parser.add_argument("--cam-wrist-device", default=DEFAULT_WRIST_DEVICE, help="single-arm wrist camera")
