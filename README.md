@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)](docs/INSTALLATION.md) [![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu&logoColor=white)](docs/INSTALLATION.md) [![LeRobot](https://img.shields.io/badge/LeRobot-v2.1-FFD21E)](https://github.com/huggingface/lerobot) [![OpenPI](https://img.shields.io/badge/OpenPI-pi0%20%7C%20pi0.5-6C5CE7)](https://github.com/Physical-Intelligence/openpi) [![Control](https://img.shields.io/badge/Robot_Control-20_Hz-2E8B57)](#real-robot-deployment)
 
-[**Code**](https://github.com/SUNNYsyy2005/bimanual-vla) &nbsp;&middot;&nbsp; [**Documentation**](docs/README.md) &nbsp;&middot;&nbsp; [**Demo**](#demo) &nbsp;&middot;&nbsp; [**Installation**](docs/INSTALLATION.md)
+[**Code**](https://github.com/ppsdk/bimanual-vla) &nbsp;&middot;&nbsp; [**Documentation**](docs/README.md) &nbsp;&middot;&nbsp; [**Demo**](#demo) &nbsp;&middot;&nbsp; [**Installation**](docs/INSTALLATION.md)
 
 </div>
 
@@ -113,6 +113,34 @@ For command-line bimanual teleoperation and recording:
 ```bash
 bin/bimanual-vla teleop-bimanual --record --schema joint
 ```
+
+### Bimanual CAN Topology
+
+The deployed master/slave system uses two USB-CAN interfaces, not one interface
+per arm:
+
+| Side | Physical bus | `teleop-bimanual` data on that bus |
+|---|---|---|
+| Left | Left master and left slave share `can0` | Master `0x15x` control frames become actions; slave `0x2Ax` feedback becomes state |
+| Right | Right master and right slave share `can1` | Master `0x15x` control frames become actions; slave `0x2Ax` feedback becomes state |
+
+`teleop-bimanual` opens one `C_PiperInterface_V2` connection per side, for two
+SDK connections in total. Its compatibility options default to
+`--left-master can0 --left-slave can0 --right-master can1 --right-slave can1`;
+the command refuses mappings where a same-side pair does not share a bus or the
+left and right pairs collide on one interface.
+
+Configure the teaching/input arm and motion/output arm separately before
+joining them on the shared bus: use `MasterSlaveConfig(0xFA, ...)` for the
+master and `MasterSlaveConfig(0xFC, ...)` for the slave. Then connect the pair
+and power the slave before the master. The teleoperation command does not
+rewrite these persistent roles at startup or shutdown. Between episodes, move
+the master arms to the start pose so the slave arms follow; the command does not
+send a competing automatic reset trajectory on the shared buses.
+
+The GUI collection path and RTC inference path are separate. They connect only
+the two slave/output arms (`can0` left, `can1` right) and do not run
+`teleop-bimanual`.
 
 See the [GUI operation guide](docs/collection/GUI_OPERATION_GUIDE.md) and
 [data collection guide](docs/collection/DATA_COLLECTION_GUIDE.md) before
@@ -270,7 +298,7 @@ accounting, trajectory inspection, and evaluation video management.
 The robot workstation is tested with Ubuntu 22.04 and Python 3.10:
 
 ```bash
-git clone https://github.com/SUNNYsyy2005/bimanual-vla.git
+git clone https://github.com/ppsdk/bimanual-vla.git
 cd bimanual-vla
 
 conda create -n dual_arm python=3.10.20 -y
