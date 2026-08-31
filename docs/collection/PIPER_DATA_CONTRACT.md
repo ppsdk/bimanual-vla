@@ -217,7 +217,7 @@ bin/bimanual-vla teleop-single --record --schema joint --fps 20
 bin/bimanual-vla teleop-bimanual --record --schema joint --fps 20
 ```
 
-state 使用 slave measured，action 使用 same-step master mapped absolute target。
+`teleop-bimanual` 使用两路共享 CAN：左侧主从共享 `can0`，右侧主从共享 `can1`。每侧由同一个 SDK 实例读取 slave feedback 作为 state，并读取 master control frame 作为 same-step action。
 
 ### Delivery P1
 
