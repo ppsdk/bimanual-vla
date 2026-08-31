@@ -136,11 +136,11 @@ def build_policy_metadata(
     schema = str(schema).strip().lower()
     arm_mode = str(arm_mode).strip().lower()
     arm_side = "both" if arm_mode == "bimanual" else str(arm_side).strip().lower()
-    get_rtx5060_profile(profile)
+    profile_info = get_rtx5060_profile(profile)
     state_dim, action_dim = _contract_dimensions(schema, arm_mode)
     cameras = _camera_keys(arm_mode, arm_side)
-    if int(action_horizon) <= 0 or float(action_hz) <= 0:
-        raise ValueError("action_horizon and action_hz must be positive")
+    if int(action_horizon) < 16 or float(action_hz) <= 0:
+        raise ValueError("action_horizon must be at least 16 and action_hz must be positive")
     if rtc_enabled:
         if int(rtc_execution_horizon) <= 0:
             raise ValueError("rtc_execution_horizon must be positive")
@@ -152,6 +152,15 @@ def build_policy_metadata(
     backend = str(backend).strip().lower()
     if backend not in {"pi", "smolvla"}:
         raise ValueError("backend must be 'pi' or 'smolvla'")
+    if not profile_info.allows(model_variant):
+        raise ValueError(
+            f"{model_variant} is not in the {profile_info.name} edge envelope; "
+            f"recommended={profile_info.recommended_models}, experimental={profile_info.experimental_models}"
+        )
+    if backend == "smolvla" and model_variant != "smolvla":
+        raise ValueError("SmolVLA backend requires model_variant='smolvla'")
+    if backend == "pi" and model_variant == "smolvla":
+        raise ValueError("model_variant='smolvla' requires backend='pi0' or 'pi05'")
     if backend == "smolvla" and schema != "joint":
         raise ValueError("SmolVLA edge backend currently supports the joint schema only")
     if backend == "smolvla" and rtc_enabled:
@@ -453,6 +462,20 @@ def check_device(*, profile: str, device: str = "auto", model_variant: str = "pi
                 f"{profile_info.minimum_cuda_memory_gb:.2f} GiB"
             )
         result["memory_check"] = "ok"
+        try:
+            free_bytes, total_bytes = torch.cuda.mem_get_info(index)
+            free_gb = float(free_bytes) / (1024**3)
+            result.update(
+                {
+                    "cuda_free_memory_gb": round(free_gb, 2),
+                    "cuda_mem_get_info_total_gb": round(float(total_bytes) / (1024**3), 2),
+                    "cuda_free_memory_check": (
+                        "ok" if free_gb >= profile_info.minimum_cuda_memory_gb else "low"
+                    ),
+                }
+            )
+        except Exception:
+            result["cuda_free_memory_check"] = "not_available"
     return result
 
 

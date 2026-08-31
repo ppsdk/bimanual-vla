@@ -37,8 +37,11 @@ SmolVLA 的输入 feature 必须按 Piper 数据合同训练或转换，单臂�
 python3 -m venv /opt/bimanual-vla-5060-venv
 source /opt/bimanual-vla-5060-venv/bin/activate
 # 先按 NVIDIA/CUDA 驱动选择并安装 torch/torchvision
-python -m pip install -r requirements-rtx5060.txt
+python -m pip install -r requirements-rtx5060-pi.txt
 export HF_HOME=/data/cache/huggingface
+
+# SmolVLA uses a separate environment because its Transformers range differs:
+# python -m pip install -r requirements-rtx5060-smolvla.txt
 ```
 
 检查 CUDA 和 checkpoint：
@@ -52,7 +55,7 @@ bin/bimanual-vla local-policy-check \
   --model-variant pi0 --profile rtx5060_8gb --device cuda
 ```
 
-`local-policy-check` 不加载模型，检查 `model.safetensors`、norm stats、Piper 维度和 RTX 5060 profile。`pi05` 在 8GB profile 中是 experimental，只有在实际显存和延迟验收后才可启用。
+`local-policy-check` 不加载模型，检查 `model.safetensors`、norm stats、Piper 维度、相机 feature、权重大小、系统内存和 RTX 5060 profile。`pi05` 在 8GB profile 中是 experimental，只有在实际显存和延迟验收后才可启用。OpenPI pi 与 SmolVLA 使用不同 Transformers 版本，必须使用不同虚拟环境。
 
 ## 启动服务
 

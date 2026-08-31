@@ -197,6 +197,19 @@ class LocalPolicyServerTest(unittest.TestCase):
         self.assertEqual(result["minimum_cuda_memory_gb"], 7.0)
         self.assertEqual(result["memory_check"], "not_available")
 
+    def test_metadata_requires_safe_minimum_horizon(self):
+        with self.assertRaisesRegex(ValueError, "at least 16"):
+            build_policy_metadata(
+                schema="joint",
+                arm_mode="bimanual",
+                arm_side="both",
+                dataset_id="demo",
+                model_variant="pi0",
+                checkpoint="/tmp/demo",
+                profile="rtx5060_8gb",
+                action_horizon=10,
+            )
+
     def test_cli_has_separate_check_and_serve_modes(self):
         args = parse_args(
             [
