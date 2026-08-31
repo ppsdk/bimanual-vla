@@ -92,7 +92,7 @@ Module responsibilities:
 | Control interface | SocketCAN through `piper_sdk.C_PiperInterface_V2` |
 | CAN bitrate | `1,000,000 bit/s` |
 | Control frequency | `20 Hz` |
-| Typical bimanual mapping | Left arm `can0`, right arm `can1`; verify after connecting hardware |
+| Typical bimanual output/inference mapping | Left slave/output arm `can0`, right slave/output arm `can1`; inference connects only these two arms |
 | Master/slave teleoperation | Two USB-CAN buses: left master+slave on `can0`, right master+slave on `can1` |
 
 ### Sensors
