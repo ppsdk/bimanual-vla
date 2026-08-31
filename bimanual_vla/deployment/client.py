@@ -313,7 +313,11 @@ class PolicyProtocol:
 
 
 def connect_piper(can_name: str) -> Any:
-    """Connect for feedback; this alone does not enable or command the arm."""
+    """Connect one inference/output (slave) arm for feedback and commands.
+
+    Bimanual inference creates exactly two objects, on can0 and can1. The
+    teaching/master arms are intentionally not connected in this path.
+    """
     from piper_sdk import C_PiperInterface_V2
 
     require_can_interface_up(can_name)
