@@ -14,6 +14,7 @@
 ## 训练与部署
 
 - [RTC 客户端指南](deployment/RTC_CLIENT_GUIDE.md)
+- [Orin NX 本地推理](deployment/ORIN_NX_LOCAL_INFERENCE.md)
 - [服务器路径、环境、训练与评测](deployment/SERVER_PATHS_ENV_TRAIN_EVAL.md)
 - [NAS 部署与使用](deployment/NAS_DEPLOYMENT_AND_USAGE.md)
 - [实机安全阈值](deployment/SAFETY_THRESHOLDS_8_3_64EPS.md)

@@ -78,8 +78,9 @@ because `/dev/videoN` indices can change after USB reconnection.
 | Role | Typical platform | Responsibility |
 |---|---|---|
 | Robot workstation | Ubuntu 22.04, x86_64 | CAN control, camera capture, GUI, RTC client |
-| Policy and Dashboard server | NVIDIA RTX 4090 workstation | Dataset management, Policy inference, telemetry |
-| Training cluster | NVIDIA H100 / H200 with Slurm | Multi-GPU fine-tuning and evaluation |
+| Policy and Dashboard server | NVIDIA RTX 4090 workstation | Remote Policy inference, dataset management, telemetry |
+| Edge Policy node | NVIDIA Orin NX | Parallel local OpenPI inference, no ROS2; see [NX deployment](docs/deployment/ORIN_NX_LOCAL_INFERENCE.md) |
+| Training cluster | NVIDIA H100 / H200 with Slurm | Fine-tuning and evaluation; finalized weights are copied from NAS to inference nodes |
 
 ROS, ROS2, gRPC, and EtherCAT are not required by the current stack.
 
