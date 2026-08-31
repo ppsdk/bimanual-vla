@@ -77,7 +77,7 @@ because `/dev/videoN` indices can change after USB reconnection.
 
 | Role | Typical platform | Responsibility |
 |---|---|---|
-| Robot workstation | Ubuntu 22.04, x86_64 | CAN control, camera capture, GUI, RTC client |
+| Robot workstation | Ubuntu 22.04, x86_64 | CAN control, camera capture, GUI, RTC client; left master/slave share `can0`, right master/slave share `can1` |
 | Policy and Dashboard server | NVIDIA RTX 4090 workstation | Remote Policy inference, dataset management, telemetry |
 | Edge Policy node | NVIDIA Orin NX 16 GB | Parallel local OpenPI inference, no ROS2; maintained on its own branch |
 | Local Policy node | NVIDIA RTX 5060, 8 GB | Parallel local OpenPI/SmolVLA inference, no ROS2; see [5060 deployment](docs/deployment/RTX5060_LOCAL_INFERENCE.md) |

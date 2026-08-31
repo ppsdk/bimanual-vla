@@ -15,7 +15,7 @@ EEF action。夹爪统一为 opening fraction：`0=闭合，1=张开`。采集�
 
 ## 1. 系统组成
 
-- 机械臂：Piper 执行输出臂，通过 SocketCAN `can0` 通讯，波特率 `1,000,000`。
+- 机械臂：Piper 执行输出臂，通过 SocketCAN 通讯，波特率 `1,000,000`；双臂拓扑为左侧主从共享 `can0`、右侧主从共享 `can1`，本数采流程只连接两只从臂/输出臂。
 - 第三视角相机：Intel RealSense D435i 的 RGB 节点。
 - 腕部相机：Intel RealSense D405 的 RGB 节点。
 - 采集频率：固定使用 `20 Hz`。
@@ -35,7 +35,7 @@ conda activate dual_arm
 
 ### 2.1 检查 CAN
 
-本项目的双臂主从硬件使用两路 USB-CAN：左侧主臂和从臂共享 `can0`，右侧主臂和从臂共享 `can1`。推理客户端只连接两只从臂。注意：当前 legacy `teleop-bimanual` 代码仍按四个独立 CAN 接口实现，尚未完成共享总线重构，不能直接用于这套两路 USB-CAN 主从采集。
+本项目的双臂主从硬件使用两路 USB-CAN：左侧主臂和从臂共享 `can0`，右侧主臂和从臂共享 `can1`。当前 GUI 数采读取两只从臂/输出臂；推理客户端也只连接两只从臂。
 
 查看 CAN 接口：
 
