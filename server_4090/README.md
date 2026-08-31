@@ -325,8 +325,8 @@ bin/bimanual-vla rtc-client \
   --port 8000 \
   --arm-mode bimanual \
   --arm-side both \
-  --left-can can1 \
-  --right-can can3 \
+  --left-can can0 \
+  --right-can can1 \
   --cam-high-device auto \
   --cam-left-wrist-device auto \
   --cam-right-wrist-device auto \
