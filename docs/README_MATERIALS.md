@@ -93,7 +93,7 @@ Module responsibilities:
 | CAN bitrate | `1,000,000 bit/s` |
 | Control frequency | `20 Hz` |
 | Typical bimanual output/inference mapping | Left slave/output arm `can0`, right slave/output arm `can1`; inference connects only these two arms |
-| Master/slave teleoperation | Hardware uses two USB-CAN buses (left pair `can0`, right pair `can1`); the current legacy `teleop-bimanual` entrypoint still expects four interfaces and must be refactored before shared-bus use |
+| Physical CAN topology | Left master/slave pair shares `can0`; right master/slave pair shares `can1` |
 
 ### Sensors
 
