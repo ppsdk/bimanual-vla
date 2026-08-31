@@ -94,6 +94,7 @@ Module responsibilities:
 | Control frequency | `20 Hz` |
 | Typical bimanual output/inference mapping | Left slave/output arm `can0`, right slave/output arm `can1`; inference connects only these two arms |
 | Physical CAN topology | Left master/slave pair shares `can0`; right master/slave pair shares `can1` |
+| `teleop-bimanual` connections | One SDK connection per side; two connections total |
 
 ### Sensors
 

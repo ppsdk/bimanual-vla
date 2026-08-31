@@ -1,4 +1,9 @@
-"""Bimanual Piper master/slave teleoperation and v3 raw-data collection."""
+"""Bimanual Piper master/slave teleoperation and v3 raw-data collection.
+
+Each physical master/slave pair shares one SocketCAN interface. A single
+``C_PiperInterface_V2`` instance per side receives the master's 0x15x control
+frames and the slave's 0x2Ax feedback frames.
+"""
 
 from __future__ import annotations
 
@@ -43,10 +48,12 @@ except ModuleNotFoundError:  # Allow contract tooling/tests off the robot host.
     C_PiperInterface_V2 = None  # type: ignore[assignment]
 from bimanual_vla.collection.trajectory import TrajectoryRecorder
 
+# Compatibility keeps the four role-named CLI options, but each side must name
+# the same physical bus. piper_sdk 0.6.2 is a singleton per CAN interface.
 DEFAULT_LEFT_MASTER = "can0"
-DEFAULT_LEFT_SLAVE = "can1"
-DEFAULT_RIGHT_MASTER = "can2"
-DEFAULT_RIGHT_SLAVE = "can3"
+DEFAULT_LEFT_SLAVE = "can0"
+DEFAULT_RIGHT_MASTER = "can1"
+DEFAULT_RIGHT_SLAVE = "can1"
 
 # v3 collection default. CLI --fps may override it and metadata follows it.
 RECORD_HZ = DEFAULT_FPS
@@ -64,6 +71,25 @@ def _read_7d(arm: C_PiperInterface_V2) -> np.ndarray:
     """Read six measured joint radians plus v3 opening fraction."""
     joints_message = arm.GetArmJointMsgs().joint_state
     gripper_message = arm.GetArmGripperMsgs().gripper_state
+    joints = np.array(
+        [
+            joints_message.joint_1,
+            joints_message.joint_2,
+            joints_message.joint_3,
+            joints_message.joint_4,
+            joints_message.joint_5,
+            joints_message.joint_6,
+        ],
+        dtype=np.float64,
+    ) / _RAD_FACTOR
+    opening_m = abs(float(gripper_message.grippers_angle)) / _M_FACTOR
+    return np.append(joints, gripper_opening_fraction(opening_m)).astype(np.float32)
+
+
+def _read_master_7d(bus: C_PiperInterface_V2) -> np.ndarray:
+    """Read the teaching arm target carried by 0x15x control frames."""
+    joints_message = bus.GetArmJointCtrl().joint_ctrl
+    gripper_message = bus.GetArmGripperCtrl().gripper_ctrl
     joints = np.array(
         [
             joints_message.joint_1,
@@ -174,49 +200,31 @@ def _countdown(seconds: int, keys: KeyListener):
     print("\r[RECORD] GO                   ")
 
 
-def estop_all(lm, ls, rm, rs):
-    for arm in (lm, ls, rm, rs):
-        arm.EmergencyStop(0x01)
+def estop_all(*buses):
+    for bus in dict.fromkeys(buses):
+        bus.EmergencyStop(0x01)
     print("\n\033[91m[E-STOP] ALL ARMS STOPPED. Press R to recover.\033[0m")
 
 
-def recover_all(lm, ls, rm, rs):
-    for arm in (lm, ls, rm, rs):
-        arm.EmergencyStop(0x02)
+def recover_all(*buses):
+    unique_buses = tuple(dict.fromkeys(buses))
+    for bus in unique_buses:
+        bus.EmergencyStop(0x02)
     time.sleep(0.3)
-    for arm in (lm, ls, rm, rs):
-        arm.EnablePiper()
+    for bus in unique_buses:
+        bus.EnablePiper()
     time.sleep(0.3)
-    setup_master_slave(lm, ls, rm, rs)
 
 
-def handle_estop(lm, ls, rm, rs, start_14d, recorder, keys):
+def handle_estop(left_bus, right_bus, recorder, keys):
     keys.estop = False
-    estop_all(lm, ls, rm, rs)
+    estop_all(left_bus, right_bus)
     recorder.start()
     keys.wait_for("r", "  Press R to recover: ")
     print()
     if keys.quit:
         return
-    recover_all(lm, ls, rm, rs)
-    auto_reset_all(lm, ls, rm, rs, start_14d)
-
-
-def auto_reset_all(lm, ls, rm, rs, start_14d: np.ndarray):
-    target_left, target_right = start_14d[:7], start_14d[7:14]
-    current = (_read_7d(lm), _read_7d(ls), _read_7d(rm), _read_7d(rs))
-    targets = (target_left, target_left, target_right, target_right)
-    arms = (lm, ls, rm, rs)
-    sys.stdout.write("\n[RESET] All 4 arms → start pose...")
-    sys.stdout.flush()
-    workers = [threading.Thread(target=_reset_one_arm, args=(arm, now, target)) for arm, now, target in zip(arms, current, targets)]
-    for worker in workers:
-        worker.start()
-    for worker in workers:
-        worker.join()
-    setup_master_slave(lm, ls, rm, rs)
-    time.sleep(0.3)
-    print(" done.")
+    recover_all(left_bus, right_bus)
 
 
 def connect_arm(can_name: str, role: str) -> C_PiperInterface_V2:
@@ -229,18 +237,31 @@ def connect_arm(can_name: str, role: str) -> C_PiperInterface_V2:
     return arm
 
 
-def setup_master_slave(lm, ls, rm, rs):
-    lm.MasterSlaveConfig(0xFA, 0, 0, 0)
-    rm.MasterSlaveConfig(0xFA, 0, 0, 0)
-    ls.MasterSlaveConfig(0xFC, 0, 0, 0)
-    rs.MasterSlaveConfig(0xFC, 0, 0, 0)
-    print("Master-slave configured.")
+def _require_shared_bus_mapping(args) -> tuple[str, str]:
+    """Validate the two-bus wiring before any CAN connection is opened."""
+    if args.left_master != args.left_slave:
+        raise ValueError(
+            "left master and slave must share one CAN interface "
+            f"(got {args.left_master!r} and {args.left_slave!r})"
+        )
+    if args.right_master != args.right_slave:
+        raise ValueError(
+            "right master and slave must share one CAN interface "
+            f"(got {args.right_master!r} and {args.right_slave!r})"
+        )
+    if args.left_master == args.right_master:
+        raise ValueError("left and right master/slave pairs must use different CAN interfaces")
+    return args.left_master, args.right_master
 
 
-def teardown_master_slave(lm, rm):
-    for arm in (lm, rm):
-        arm.MasterSlaveConfig(0x00, 0, 0, 0)
-    print("Master-slave disabled. Slave arms need reboot to resume direct CAN control.")
+def _report_start_pose(left_bus, right_bus, start_14d: np.ndarray):
+    """Report reset error without competing with the teaching arms on 0x15x."""
+    measured = np.concatenate((_read_7d(left_bus), _read_7d(right_bus)))
+    max_error = float(np.max(np.abs(measured - start_14d)))
+    print(
+        "[RESET] Move the two master arms to the start pose; the slave arms "
+        f"follow on their shared buses (current max error: {max_error:.3f})."
+    )
 
 
 def _default_instruction(task_name: str) -> str:
@@ -365,23 +386,22 @@ def run(args):
     if args.fps <= 0 or args.action_horizon <= 0:
         raise ValueError("--fps and --action-horizon must be positive")
     contract = _episode_contract(args)
+    left_can, right_can = _require_shared_bus_mapping(args)
     print(
-        "CAN mapping check before master/slave collection: this legacy entrypoint "
-        "expects one CAN interface per arm (four interfaces). Your two-USB-CAN "
-        "shared-bus topology is supported by the slave-only inference client, "
-        "but teleop-bimanual needs a bus-level refactor before use."
+        "CAN mapping check before master/slave collection: "
+        f"left master+slave -> {left_can} (expected can0), "
+        f"right master+slave -> {right_can} (expected can1). "
+        "Configure each arm's role before joining the pair, then power the "
+        "slave before the master."
     )
-    print("Connecting arms...")
-    lm = connect_arm(args.left_master, "left-master")
-    ls = connect_arm(args.left_slave, "left-slave")
-    rm = connect_arm(args.right_master, "right-master")
-    rs = connect_arm(args.right_slave, "right-slave")
-    setup_master_slave(lm, ls, rm, rs)
+    print("Connecting two shared master/slave buses...")
+    left_bus = connect_arm(left_can, "left master/slave pair")
+    right_bus = connect_arm(right_can, "right master/slave pair")
     time.sleep(0.5)
 
     pose_file = pathlib.Path(args.start_pose)
     if args.capture_start:
-        start_14d = np.concatenate([_read_7d(ls), _read_7d(rs)])
+        start_14d = np.concatenate([_read_7d(left_bus), _read_7d(right_bus)])
         np.save(str(pose_file), start_14d)
     elif pose_file.exists():
         start_14d = np.asarray(np.load(str(pose_file)), dtype=np.float32)
@@ -409,31 +429,33 @@ def run(args):
     dt = 1.0 / args.fps
     pi0_writer = _maybe_make_pi0_writer(args, contract)
 
-    auto_reset_all(lm, ls, rm, rs, start_14d)
+    _report_start_pose(left_bus, right_bus, start_14d)
     print(f"\n{'[RECORD]' if args.record else '[DRY RUN]'} schema={args.schema} fps={args.fps} SPACE=end E=e-stop q=quit\n")
     try:
         while not keys.quit:
             started = time.time()
             if keys.estop:
-                handle_estop(lm, ls, rm, rs, start_14d, recorder, keys)
+                handle_estop(left_bus, right_bus, recorder, keys)
                 if not keys.quit:
+                    _report_start_pose(left_bus, right_bus, start_14d)
                     _countdown(COUNTDOWN_S, keys)
                 continue
 
             if args.schema == JOINT_SCHEMA:
-                left_state, right_state = _read_7d(ls), _read_7d(rs)
+                left_state, right_state = _read_7d(left_bus), _read_7d(right_bus)
                 state_timestamp = time.time()
-                left_action, right_action = _read_7d(lm), _read_7d(rm)
+                left_action = _read_master_7d(left_bus)
+                right_action = _read_master_7d(right_bus)
                 action_timestamp = time.time()
                 state = np.concatenate((left_state, right_state))
                 action = np.concatenate((left_action, right_action))
                 joint_qpos = state.copy()
             else:
-                left_state, left_qpos = _read_eef_10d(ls)
-                right_state, right_qpos = _read_eef_10d(rs)
+                left_state, left_qpos = _read_eef_10d(left_bus)
+                right_state, right_qpos = _read_eef_10d(right_bus)
                 state_timestamp = time.time()
-                left_master_qpos = _read_7d(lm)
-                right_master_qpos = _read_7d(rm)
+                left_master_qpos = _read_master_7d(left_bus)
+                right_master_qpos = _read_master_7d(right_bus)
                 action_timestamp = time.time()
                 state = np.concatenate((left_state, right_state))
                 # Pose is derived from the next measured slave observation at
@@ -473,7 +495,7 @@ def run(args):
                 else:
                     recorder.start()
                 if not keys.quit and not keys.estop:
-                    auto_reset_all(lm, ls, rm, rs, start_14d)
+                    _report_start_pose(left_bus, right_bus, start_14d)
                     _countdown(COUNTDOWN_S, keys)
             sleep = dt - (time.time() - started)
             if sleep > 0:
@@ -484,18 +506,17 @@ def run(args):
             ep_idx = _save_episode(recorder, args, contract, ep_dir, ep_idx, pi0_writer, success=True)
         if cameras:
             cameras.close()
-        teardown_master_slave(lm, rm)
-        for arm in (lm, ls, rm, rs):
-            arm.DisconnectPort()
+        left_bus.DisconnectPort()
+        right_bus.DisconnectPort()
         print(f"Done. {ep_idx} episodes saved to {ep_dir}/")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--left-master", default=DEFAULT_LEFT_MASTER)
-    parser.add_argument("--left-slave", default=DEFAULT_LEFT_SLAVE)
-    parser.add_argument("--right-master", default=DEFAULT_RIGHT_MASTER)
-    parser.add_argument("--right-slave", default=DEFAULT_RIGHT_SLAVE)
+    parser.add_argument("--left-master", default=DEFAULT_LEFT_MASTER, help="left pair shared CAN (compatibility name)")
+    parser.add_argument("--left-slave", default=DEFAULT_LEFT_SLAVE, help="must equal --left-master")
+    parser.add_argument("--right-master", default=DEFAULT_RIGHT_MASTER, help="right pair shared CAN (compatibility name)")
+    parser.add_argument("--right-slave", default=DEFAULT_RIGHT_SLAVE, help="must equal --right-master")
     parser.add_argument("--schema", choices=(JOINT_SCHEMA, DELIVERY_SCHEMA), default=JOINT_SCHEMA)
     parser.add_argument("--eef-calibration", default=None, help="deprecated compatibility option; delivery pose now uses next measured slave EEF")
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
