@@ -4780,7 +4780,9 @@ def run_rtc_client(args: argparse.Namespace) -> None:
         logging.warning(
             "CAN mapping check before inference: confirm physical left slave/output "
             "arm -> %s (expected can0), right slave/output arm -> %s (expected can1); "
-            "verify with candump before enabling execution.",
+            "verify with candump before enabling execution. Disconnect the master "
+            "arms from these CAN buses during inference so they cannot publish "
+            "competing control frames.",
             args.left_can,
             args.right_can,
         )
