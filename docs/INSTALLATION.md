@@ -298,7 +298,7 @@ Confirm the active environment and reinstall the pinned SDK:
 
 ```bash
 conda activate dual_arm
-python -m pip install piper_sdk==0.6.1
+python -m pip install piper_sdk==0.6.2
 ```
 
 ### `No such device: can0`
