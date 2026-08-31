@@ -1,14 +1,15 @@
-# RTX 5060 local inference dependencies (x86_64/Linux).
+# RTX 5060 common edge-server dependencies (x86_64/Linux).
 # Install a CUDA-enabled PyTorch build compatible with the host driver first.
-# This file deliberately does not install ROS2, Piper SDK, JAX, or H200 tooling.
+# Choose exactly one model environment after installing this file:
+#   requirements-rtx5060-pi.txt
+#   requirements-rtx5060-smolvla.txt
+# Pi/OpenPI and SmolVLA require incompatible Transformers versions and must
+# not be installed into the same virtual environment.
 
 numpy==1.26.4
 scipy==1.15.3
 PyYAML==6.0.3
-transformers>=4.40.0
-accelerate>=0.28.0
 safetensors>=0.4.0
-lerobot==0.3.3
 opencv-python-headless==4.10.0.84
 Pillow>=10.0.0
 websockets==15.0.1

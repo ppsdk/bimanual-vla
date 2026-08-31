@@ -110,6 +110,69 @@ class LocalPolicyServerTest(unittest.TestCase):
             report = inspect_checkpoint(checkpoint, backend="smolvla")
             self.assertEqual(report["format"], "lerobot_smolvla_safetensors")
 
+    def test_smolvla_checkpoint_rejects_wrong_camera_contract(self):
+        with tempfile.TemporaryDirectory() as temp:
+            checkpoint = Path(temp)
+            (checkpoint / "model.safetensors").write_bytes(b"placeholder")
+            (checkpoint / "config.json").write_text(
+                json.dumps(
+                    {
+                        "input_features": {
+                            "observation.state": {"shape": [14]},
+                            "observation.images.cam_high": {"shape": [3, 224, 224]},
+                            "observation.images.cam_left_wrist": {"shape": [3, 224, 224]},
+                        },
+                        "output_features": {"action": {"shape": [14]}},
+                        "chunk_size": 50,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "image features"):
+                inspect_checkpoint(
+                    checkpoint,
+                    backend="smolvla",
+                    expected_state_dim=14,
+                    expected_action_dim=14,
+                    expected_camera_keys=("cam_high", "cam_left_wrist", "cam_right_wrist"),
+                )
+
+    def test_smolvla_checkpoint_reports_contract_details(self):
+        with tempfile.TemporaryDirectory() as temp:
+            checkpoint = Path(temp)
+            (checkpoint / "model.safetensors").write_bytes(b"placeholder")
+            (checkpoint / "config.json").write_text(
+                json.dumps(
+                    {
+                        "input_features": {
+                            "observation.state": {"shape": [14]},
+                            "observation.images.cam_high": {"shape": [3, 224, 224]},
+                            "observation.images.cam_left_wrist": {"shape": [3, 224, 224]},
+                            "observation.images.cam_right_wrist": {"shape": [3, 224, 224]},
+                        },
+                        "output_features": {"action": {"shape": [14]}},
+                        "chunk_size": 50,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            report = inspect_checkpoint(
+                checkpoint,
+                backend="smolvla",
+                expected_state_dim=14,
+                expected_action_dim=14,
+                expected_camera_keys=("cam_high", "cam_left_wrist", "cam_right_wrist"),
+            )
+            self.assertEqual(report["declared_chunk_size"], 50)
+            self.assertEqual(
+                report["declared_image_features"],
+                [
+                    "observation.images.cam_high",
+                    "observation.images.cam_left_wrist",
+                    "observation.images.cam_right_wrist",
+                ],
+            )
+
     def test_inspect_requires_safetensors_and_norm_stats(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

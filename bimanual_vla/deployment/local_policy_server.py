@@ -283,6 +283,15 @@ def _declared_feature_dim(config: Mapping[str, Any], feature_name: str) -> int |
     return None
 
 
+def _declared_image_features(config: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return LeRobot image feature names without importing the model runtime."""
+
+    features = config.get("input_features")
+    if not isinstance(features, Mapping):
+        return ()
+    return tuple(str(key) for key in features if str(key).startswith("observation.images."))
+
+
 def inspect_checkpoint(
     checkpoint: str | Path,
     *,
@@ -291,6 +300,7 @@ def inspect_checkpoint(
     backend: str = "pi",
     expected_state_dim: int | None = None,
     expected_action_dim: int | None = None,
+    expected_camera_keys: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Return a JSON-safe checkpoint report and fail closed for non-PyTorch artifacts."""
 
@@ -309,6 +319,7 @@ def inspect_checkpoint(
         "checkpoint": str(path),
         "weights": str(weights),
         "weights_bytes": weights.stat().st_size,
+        "weights_gib": round(weights.stat().st_size / (1024**3), 3),
         "format": "lerobot_smolvla_safetensors" if backend == "smolvla" else "pytorch_safetensors",
         "norm_stats": None,
     }
@@ -324,6 +335,7 @@ def inspect_checkpoint(
             raise ValueError(f"SmolVLA config.json must contain an object: {config_path}")
         declared_action_dim = _declared_feature_dim(config, "action")
         declared_state_dim = _declared_feature_dim(config, "observation.state")
+        declared_image_features = _declared_image_features(config)
         if expected_action_dim is not None and declared_action_dim is not None and declared_action_dim != expected_action_dim:
             raise ValueError(
                 f"SmolVLA checkpoint action dim={declared_action_dim} does not match "
@@ -334,13 +346,58 @@ def inspect_checkpoint(
                 f"SmolVLA checkpoint state dim={declared_state_dim} does not match "
                 f"Piper contract state dim={expected_state_dim}"
             )
+        if expected_camera_keys is not None:
+            expected_features = tuple(f"observation.images.{key}" for key in expected_camera_keys)
+            if set(declared_image_features) != set(expected_features):
+                raise ValueError(
+                    "SmolVLA checkpoint image features do not match Piper camera contract: "
+                    f"declared={list(declared_image_features)!r}, expected={list(expected_features)!r}"
+                )
+        declared_chunk_size = config.get("chunk_size")
+        try:
+            declared_chunk_size = int(declared_chunk_size) if declared_chunk_size is not None else None
+        except (TypeError, ValueError):
+            raise ValueError("SmolVLA config chunk_size must be an integer") from None
+        if declared_chunk_size is not None and declared_chunk_size < 16:
+            raise ValueError(
+                f"SmolVLA checkpoint chunk_size={declared_chunk_size} is below the client minimum of 16"
+            )
         report["config"] = str(config_path)
         report["declared_action_dim"] = declared_action_dim
         report["declared_state_dim"] = declared_state_dim
+        report["declared_image_features"] = list(declared_image_features)
+        report["declared_chunk_size"] = declared_chunk_size
         report["norm_stats"] = "embedded_in_policy_safetensors"
     elif dataset_id:
         report["norm_stats"] = str(find_norm_stats(path, dataset_id, norm_stats))
     return report
+
+
+def _read_system_memory_gb() -> tuple[float | None, float | None]:
+    """Read total and available system memory without making psutil mandatory."""
+
+    try:
+        import psutil
+
+        memory = psutil.virtual_memory()
+        return float(memory.total) / (1024**3), float(memory.available) / (1024**3)
+    except Exception:
+        pass
+    try:
+        values: dict[str, float] = {}
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            key, value = line.split(":", 1)
+            parts = value.strip().split()
+            if parts and parts[0].replace(".", "", 1).isdigit():
+                values[key] = float(parts[0]) * (1024 if len(parts) > 1 and parts[1].lower() == "kb" else 1)
+        total = values.get("MemTotal")
+        available = values.get("MemAvailable")
+        return (
+            total / (1024**3) if total is not None else None,
+            available / (1024**3) if available is not None else None,
+        )
+    except Exception:
+        return None, None
 
 
 def check_device(*, profile: str, device: str = "auto", model_variant: str = "pi05", torch_module: Any | None = None) -> dict[str, Any]:
@@ -367,7 +424,20 @@ def check_device(*, profile: str, device: str = "auto", model_variant: str = "pi
         "profile_memory_gb": profile_info.memory_gb,
         "minimum_cuda_memory_gb": profile_info.minimum_cuda_memory_gb,
         "memory_check": "not_available",
+        "minimum_system_memory_gb": profile_info.minimum_system_memory_gb,
+        "system_memory_check": "not_available",
     }
+    total_system_gb, available_system_gb = _read_system_memory_gb()
+    if total_system_gb is not None:
+        result["system_total_memory_gb"] = round(total_system_gb, 2)
+        if available_system_gb is not None:
+            result["system_available_memory_gb"] = round(available_system_gb, 2)
+        if total_system_gb + 1.0 < profile_info.minimum_system_memory_gb:
+            raise RuntimeError(
+                f"system reports {total_system_gb:.2f} GiB, below profile minimum "
+                f"{profile_info.minimum_system_memory_gb:.2f} GiB"
+            )
+        result["system_memory_check"] = "ok"
     if selected.startswith("cuda"):
         torch = torch_module or _import_torch()
         index = torch.cuda.current_device() if selected == "cuda" else torch.device(selected).index
@@ -528,7 +598,17 @@ def _build_openpi_policy(args: argparse.Namespace, metadata: dict[str, Any], che
                 action_sequence_keys=("action",),
             )
 
+    precision = getattr(args, "precision", "auto")
+    if precision == "auto":
+        precision = "bf16" if str(args.device).startswith("cuda") else "fp32"
+    if precision == "fp16":
+        raise ValueError(
+            "OpenPI pi backend does not support fp16; use --precision bf16 or --precision fp32"
+        )
+    if precision not in {"bf16", "fp32"}:
+        raise ValueError(f"unsupported OpenPI precision {precision!r}")
     model_cfg = pi0_config.Pi0Config(
+        dtype="bfloat16" if precision == "bf16" else "float32",
         pi05=args.model_variant == "pi05",
         action_dim=32,
         action_horizon=int(metadata["action_horizon"]),
@@ -626,10 +706,10 @@ class _SmolVLAPolicyAdapter:
             camera_order.extend(["cam_left_wrist", "cam_right_wrist"])
         else:
             camera_order.append(f"cam_{self.arm_side}_wrist")
-        if len(self.image_features) < len(camera_order):
+        if len(self.image_features) != len(camera_order):
             raise RuntimeError(
                 f"SmolVLA checkpoint exposes {len(self.image_features)} image feature(s), "
-                f"but {self.arm_mode} Piper inference requires {len(camera_order)}"
+                f"but {self.arm_mode} Piper inference requires exactly {len(camera_order)}"
             )
         for feature_name, key in zip(self.image_features, camera_order, strict=True):
             value = torch.from_numpy(self._image(images[key])).to(device=device, dtype=dtype).unsqueeze(0)
@@ -749,12 +829,15 @@ def _build_smolvla_policy(args: argparse.Namespace, metadata: dict[str, Any], ch
             f"SmolVLA action feature is {action_feature.shape[0]}D, expected {metadata['action_dim']}D"
         )
     image_features = tuple(config.image_features.keys())
-    required_images = 3 if str(metadata["arm_mode"]) == "bimanual" else 2
-    if len(image_features) < required_images:
+    expected_image_features = tuple(
+        f"observation.images.{key}"
+        for key in _camera_keys(str(metadata["arm_mode"]), str(metadata["arm_side"]))
+    )
+    required_images = len(expected_image_features)
+    if set(image_features) != set(expected_image_features) or len(image_features) != len(expected_image_features):
         raise ValueError(
-            f"SmolVLA checkpoint has {len(image_features)} image feature(s); "
-            f"Piper {metadata['arm_mode']} requires {required_images}. "
-            "Fine-tune/export the checkpoint with the required camera views."
+            "SmolVLA checkpoint image features do not match Piper camera contract: "
+            f"declared={list(image_features)!r}, expected={list(expected_image_features)!r}"
         )
     config.chunk_size = max(16, int(config.chunk_size))
     config.n_action_steps = config.chunk_size
@@ -780,7 +863,7 @@ def _build_smolvla_policy(args: argparse.Namespace, metadata: dict[str, Any], ch
         arm_mode=str(metadata["arm_mode"]),
         arm_side=str(metadata["arm_side"]),
         action_dim=int(metadata["action_dim"]),
-        image_features=image_features,
+        image_features=expected_image_features,
         instruction=args.default_prompt,
     )
 
@@ -943,7 +1026,12 @@ def run_check(args: argparse.Namespace) -> dict[str, Any]:
         backend=args.backend,
         expected_state_dim=_contract_dimensions(args.schema, args.arm_mode)[0],
         expected_action_dim=_contract_dimensions(args.schema, args.arm_mode)[1],
+        expected_camera_keys=_camera_keys(
+            args.arm_mode, "both" if args.arm_mode == "bimanual" else args.arm_side
+        ),
     )
+    if args.backend == "smolvla" and report.get("declared_chunk_size") is not None:
+        args.action_horizon = int(report["declared_chunk_size"])
     device = check_device(profile=args.profile, device=args.device, model_variant=args.model_variant)
     metadata = _merge_runtime_metadata(args, checkpoint)
     report.update({"device": device, "policy_metadata": metadata})
@@ -954,14 +1042,19 @@ def run_serve(args: argparse.Namespace) -> None:
     checkpoint = Path(args.checkpoint).expanduser().resolve()
     if args.backend == "smolvla":
         args.model_variant = "smolvla"
-    inspect_checkpoint(
+    report = inspect_checkpoint(
         checkpoint,
         dataset_id=args.dataset_id,
         norm_stats=args.norm_stats,
         backend=args.backend,
         expected_state_dim=_contract_dimensions(args.schema, args.arm_mode)[0],
         expected_action_dim=_contract_dimensions(args.schema, args.arm_mode)[1],
+        expected_camera_keys=_camera_keys(
+            args.arm_mode, "both" if args.arm_mode == "bimanual" else args.arm_side
+        ),
     )
+    if args.backend == "smolvla" and report.get("declared_chunk_size") is not None:
+        args.action_horizon = int(report["declared_chunk_size"])
     device_report = check_device(profile=args.profile, device=args.device, model_variant=args.model_variant)
     args.device = device_report["device"]
     if args.device == "cpu" and not args.allow_cpu:

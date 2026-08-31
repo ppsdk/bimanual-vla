@@ -1,0 +1,5 @@
+# RTX 5060 OpenPI pi/pi05 inference environment.
+-r requirements-rtx5060.txt
+
+# OpenPI's PyTorch path uses its transformers replacement at this version.
+transformers==4.53.2
